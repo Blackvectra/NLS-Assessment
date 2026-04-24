@@ -147,6 +147,9 @@ param (
     [switch]$OpenReport,
 
     [Parameter(Mandatory = $false)]
+    [string]$Compare,       # Manual path to previous report for delta comparison
+
+    [Parameter(Mandatory = $false)]
     [switch]$AdminRoles,        # Admin role inventory and over-privilege detection
 
     [Parameter(Mandatory = $false)]
@@ -774,6 +777,7 @@ Publish-NLSAssessmentSummary `
     -Coverage (Get-NLSCoverageMap) `
     -OutputPath $summaryPath `
     -ExtendedData $extendedData `
+    -DeltaData $deltaData `
     -Redact $runRedaction
 
 $exceptions = Get-NLSExceptions
@@ -783,6 +787,38 @@ Publish-NLSExceptionsList `
     -Exceptions $exceptions `
     -OutputPath $exceptionsPath `
     -Redact $runRedaction
+
+# ── Remediation Script ────────────────────────────────────────
+$remediationPath = Join-Path $outDir "$reportName-remediation.ps1"
+Publish-NLSRemediationScript `
+    -ScoredResults $scoredResults `
+    -OutputPath $remediationPath `
+    -TenantName $tenantName `
+    -Redact $runRedaction
+
+# ── Delta Reporting ───────────────────────────────────────────
+$deltaData = @{ Available = $false }
+
+# Try manual path first, then auto-find
+$previousReport = $null
+if ($Compare -and (Test-Path $Compare)) {
+    $previousReport = $Compare
+    Write-Host "[-] Using specified previous report for delta..." -ForegroundColor DarkGray
+} else {
+    $previousReport = Find-NLSPreviousReport `
+        -OutputDir $outDir `
+        -TenantName $tenantName `
+        -CurrentReportPath $summaryPath
+    if ($previousReport) {
+        Write-Host "[-] Previous report found for delta: $(Split-Path $previousReport -Leaf)" -ForegroundColor DarkGray
+    }
+}
+
+if ($previousReport) {
+    $deltaData = Get-NLSDeltaReport `
+        -CurrentResults $scoredResults `
+        -PreviousReportPath $previousReport
+}
 
 # ─────────────────────────────────────────────
 # Summary Output
@@ -799,7 +835,12 @@ Write-Host "  Partial    $($s.Partial)"   -ForegroundColor $(if ($s.Partial -gt 
 Write-Host "  Gap        $($s.Gap)"       -ForegroundColor $(if ($s.Gap -gt 0) { 'Red' } else { 'Green' })
 Write-Host "  Total      $($s.Total)"     -ForegroundColor White
 Write-Host ''
-Write-Host "  Report:    $outDir\$reportName.md" -ForegroundColor Cyan
+Write-Host "  Report:      $outDir\$reportName.md" -ForegroundColor Cyan
+Write-Host "  Remediation: $outDir\$reportName-remediation.ps1" -ForegroundColor Cyan
+Write-Host "  Exceptions:  $outDir\$reportName-exceptions.md" -ForegroundColor DarkGray
+if ($deltaData.Available) {
+    Write-Host "  Delta:       Improved $($deltaData.ImprovedCount)  Regressed $($deltaData.RegressedCount)  New $($deltaData.NewCount)" -ForegroundColor Cyan
+}
 Write-Host ''
 
 # Auto-open report in VS Code if installed
