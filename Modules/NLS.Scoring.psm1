@@ -13,7 +13,7 @@ function Invoke-NLSScoringModel {
     param(
         [Parameter(Mandatory = $true)][hashtable]$Results,
         [bool]$Redact        = $false,
-        [bool]$NIST          = $true,
+        [bool]$NIST          = $false,
         [bool]$CIS           = $false,
         [bool]$HIPAA         = $false,
         [bool]$HIPAAProposed = $false,
