@@ -251,3 +251,262 @@ Export-ModuleMember -Function `
     Get-NLSConditionalAccessTelemetry, `
     Get-NLSUserMFAStatus, `
     Get-NLSSecureScore
+
+function Get-NLSAdminRoleInventory {
+    <#
+    .SYNOPSIS
+        Pulls all users with admin roles assigned via Graph.
+        Surfaces over-privileged accounts and Global Admin sprawl.
+        Requires Directory.Read.All scope.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        $directoryRoles = Get-MgDirectoryRole -All -ErrorAction Stop
+        $highPrivRoles  = @(
+            'Global Administrator',
+            'Privileged Role Administrator',
+            'Security Administrator',
+            'Exchange Administrator',
+            'SharePoint Administrator',
+            'Conditional Access Administrator',
+            'Authentication Administrator',
+            'Hybrid Identity Administrator'
+        )
+
+        $roleInventory = foreach ($role in $directoryRoles) {
+            $members = Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id -All -ErrorAction SilentlyContinue
+            if ($members.Count -gt 0) {
+                [ordered]@{
+                    RoleName    = $role.DisplayName
+                    IsHighPriv  = $highPrivRoles -contains $role.DisplayName
+                    MemberCount = $members.Count
+                    Members     = @($members | ForEach-Object {
+                        $upn = if ($Redact) { '[REDACTED_UPN]' } else {
+                            (Get-MgUser -UserId $_.Id -ErrorAction SilentlyContinue).UserPrincipalName
+                        }
+                        $upn
+                    } | Where-Object { $_ })
+                }
+            }
+        }
+
+        $globalAdmins     = ($roleInventory | Where-Object { $_.RoleName -eq 'Global Administrator' })
+        $globalAdminCount = if ($globalAdmins) { $globalAdmins.MemberCount } else { 0 }
+        $highPrivCount    = ($roleInventory | Where-Object { $_.IsHighPriv } | Measure-Object -Property MemberCount -Sum).Sum
+
+        $results['AdminRoleInventory'] = [ordered]@{
+            TotalRolesAssigned  = ($roleInventory | Measure-Object).Count
+            GlobalAdminCount    = $globalAdminCount
+            HighPrivRoleCount   = $highPrivCount
+            GlobalAdminExcessive = $globalAdminCount -gt 2
+            Roles               = @($roleInventory)
+        }
+
+        Register-NLSCoverage -ControlFamily 'AdminRoleInventory' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSAdminRoleInventory' -Message 'Failed to retrieve admin role inventory' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'AdminRoleInventory' -Status 'Partial' -Reason $_.Exception.Message
+        $results['AdminRoleInventory'] = $null
+    }
+
+    return $results
+}
+
+function Get-NLSStaleAccounts {
+    <#
+    .SYNOPSIS
+        Surfaces user accounts inactive for 90+ days.
+        Stale accounts are a common lateral movement and persistence vector.
+        Requires AuditLog.Read.All scope.
+    #>
+    param(
+        [bool]$Redact       = $false,
+        [int]$ThresholdDays = 90
+    )
+
+    $results = [ordered]@{}
+
+    try {
+        $cutoff   = (Get-Date).AddDays(-$ThresholdDays).ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $filter   = "signInActivity/lastSignInDateTime le $cutoff"
+        $allUsers = Get-MgUser -All -Filter "accountEnabled eq true" `
+            -Property 'displayName,userPrincipalName,signInActivity,assignedLicenses' `
+            -ErrorAction Stop
+
+        $staleUsers = @($allUsers | Where-Object {
+            $_.SignInActivity -and
+            $_.SignInActivity.LastSignInDateTime -and
+            $_.SignInActivity.LastSignInDateTime -lt (Get-Date).AddDays(-$ThresholdDays)
+        })
+
+        $neverSignedIn = @($allUsers | Where-Object {
+            -not $_.SignInActivity -or -not $_.SignInActivity.LastSignInDateTime
+        })
+
+        $results['StaleAccounts'] = [ordered]@{
+            ThresholdDays       = $ThresholdDays
+            TotalActiveUsers    = $allUsers.Count
+            StaleCount          = $staleUsers.Count
+            NeverSignedInCount  = $neverSignedIn.Count
+            StaleList           = @($staleUsers | ForEach-Object {
+                $upn      = if ($Redact) { '[REDACTED_UPN]' } else { $_.UserPrincipalName }
+                $lastSign = $_.SignInActivity.LastSignInDateTime
+                [ordered]@{ UPN = $upn; LastSignIn = $lastSign }
+            })
+            NeverSignedInList   = @($neverSignedIn | ForEach-Object {
+                if ($Redact) { '[REDACTED_UPN]' } else { $_.UserPrincipalName }
+            })
+        }
+
+        Register-NLSCoverage -ControlFamily 'StaleAccounts' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSStaleAccounts' -Message 'Failed to retrieve stale account data. Requires AuditLog.Read.All.' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'StaleAccounts' -Status 'Partial' -Reason $_.Exception.Message
+        $results['StaleAccounts'] = $null
+    }
+
+    return $results
+}
+
+function Get-NLSGuestAccountInventory {
+    <#
+    .SYNOPSIS
+        Surfaces external guest accounts with access to tenant resources.
+        Guest accounts are a common BEC and supply chain attack vector.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        $guests = Get-MgUser -All -Filter "userType eq 'Guest'" `
+            -Property 'displayName,userPrincipalName,signInActivity,createdDateTime,externalUserState' `
+            -ErrorAction Stop
+
+        $activeGuests = @($guests | Where-Object { $_.SignInActivity -and $_.SignInActivity.LastSignInDateTime })
+        $staleGuests  = @($guests | Where-Object {
+            -not $_.SignInActivity -or
+            -not $_.SignInActivity.LastSignInDateTime -or
+            $_.SignInActivity.LastSignInDateTime -lt (Get-Date).AddDays(-90)
+        })
+
+        $results['GuestAccountInventory'] = [ordered]@{
+            TotalGuests         = $guests.Count
+            ActiveGuests        = $activeGuests.Count
+            StaleGuests         = $staleGuests.Count
+            GuestList           = @($guests | ForEach-Object {
+                $upn      = if ($Redact) { '[REDACTED_UPN]' } else { $_.UserPrincipalName }
+                $lastSign = if ($_.SignInActivity) { $_.SignInActivity.LastSignInDateTime } else { 'Never' }
+                [ordered]@{ UPN = $upn; LastSignIn = $lastSign; State = $_.ExternalUserState }
+            })
+        }
+
+        Register-NLSCoverage -ControlFamily 'GuestAccountInventory' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSGuestAccountInventory' -Message 'Failed to retrieve guest account inventory' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'GuestAccountInventory' -Status 'Partial' -Reason $_.Exception.Message
+        $results['GuestAccountInventory'] = $null
+    }
+
+    return $results
+}
+
+function Get-NLSNamedLocations {
+    <#
+    .SYNOPSIS
+        Checks whether named locations are defined in Entra ID.
+        Named locations are required for Zero Trust network trust segmentation.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        $locations = Get-MgIdentityConditionalAccessNamedLocation -All -ErrorAction Stop
+
+        $results['NamedLocations'] = [ordered]@{
+            TotalDefined    = $locations.Count
+            HasNamedLocations = $locations.Count -gt 0
+            Locations       = @($locations | ForEach-Object {
+                [ordered]@{
+                    DisplayName = $_.DisplayName
+                    Type        = $_.OdataType
+                    IsTrusted   = if ($_.AdditionalProperties.isTrusted) { $true } else { $false }
+                }
+            })
+        }
+
+        Register-NLSCoverage -ControlFamily 'NamedLocations' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSNamedLocations' -Message 'Failed to retrieve named locations' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'NamedLocations' -Status 'Partial' -Reason $_.Exception.Message
+        $results['NamedLocations'] = $null
+    }
+
+    return $results
+}
+
+function Get-NLSServicePrincipalInventory {
+    <#
+    .SYNOPSIS
+        Surfaces service principals with high-privilege Graph permissions.
+        Over-permissioned service principals are a common persistence vector.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        $highPrivPermissions = @(
+            'Directory.ReadWrite.All',
+            'User.ReadWrite.All',
+            'Group.ReadWrite.All',
+            'Mail.ReadWrite',
+            'MailboxSettings.ReadWrite',
+            'Files.ReadWrite.All',
+            'Sites.FullControl.All',
+            'RoleManagement.ReadWrite.Directory'
+        )
+
+        $servicePrincipals = Get-MgServicePrincipal -All -ErrorAction Stop |
+            Where-Object { $_.AppRoles.Count -gt 0 -or $_.Oauth2PermissionScopes.Count -gt 0 }
+
+        $highPrivSPs = @($servicePrincipals | Where-Object {
+            $_.AppRoles | Where-Object { $highPrivPermissions -contains $_.Value }
+        })
+
+        $results['ServicePrincipalInventory'] = [ordered]@{
+            TotalServicePrincipals = $servicePrincipals.Count
+            HighPrivilegeCount     = $highPrivSPs.Count
+            HighPrivilegeList      = @($highPrivSPs | ForEach-Object {
+                [ordered]@{
+                    DisplayName = $_.DisplayName
+                    AppId       = if ($Redact) { '[REDACTED_ID]' } else { $_.AppId }
+                    Publisher   = $_.PublisherName
+                }
+            })
+        }
+
+        Register-NLSCoverage -ControlFamily 'ServicePrincipalInventory' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSServicePrincipalInventory' -Message 'Failed to retrieve service principal inventory' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'ServicePrincipalInventory' -Status 'Partial' -Reason $_.Exception.Message
+        $results['ServicePrincipalInventory'] = $null
+    }
+
+    return $results
+}
+
+Export-ModuleMember -Function `
+    Get-NLSConditionalAccessPolicies, `
+    Get-NLSConditionalAccessTelemetry, `
+    Get-NLSUserMFAStatus, `
+    Get-NLSSecureScore, `
+    Get-NLSAdminRoleInventory, `
+    Get-NLSStaleAccounts, `
+    Get-NLSGuestAccountInventory, `
+    Get-NLSNamedLocations, `
+    Get-NLSServicePrincipalInventory
