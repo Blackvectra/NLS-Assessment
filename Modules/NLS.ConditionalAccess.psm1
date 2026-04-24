@@ -18,8 +18,15 @@ function Get-NLSConditionalAccessPolicies {
 
         $policyResults = foreach ($policy in $policies) {
             $hasMfaGrant = $false
-            if ($policy.GrantControls -and $policy.GrantControls.BuiltInControls) {
-                $hasMfaGrant = $policy.GrantControls.BuiltInControls -contains 'mfa'
+            if ($policy.GrantControls) {
+                # Check BuiltInControls for legacy MFA grant
+                if ($policy.GrantControls.BuiltInControls) {
+                    $hasMfaGrant = $policy.GrantControls.BuiltInControls -contains 'mfa'
+                }
+                # Also check AuthenticationStrength -- newer policies use this instead of mfa grant
+                if (-not $hasMfaGrant -and $policy.GrantControls.AuthenticationStrength) {
+                    $hasMfaGrant = $true
+                }
             }
             $targetsLegacyAuth = $false
             if ($policy.Conditions.ClientAppTypes) {
@@ -62,13 +69,17 @@ function Get-NLSConditionalAccessPolicies {
 
         # v2 -- detect missing recommended policies
         $hasLegacyBlock      = $legacyBlocking -gt 0
-        $hasMfaAllUsers      = ($policyResults | Where-Object { $_.HasMfaGrant -and $_.TargetsAllUsers -and $_.IsEnabled }).Count -gt 0
+        # MFA check -- any enabled policy with MFA grant OR AuthenticationStrength targeting all users
+        # Also accept any enabled policy with 'mfa' or 'multifactor' in the name as a signal
+        $hasMfaAllUsers      = ($policyResults | Where-Object {
+            $_.IsEnabled -and ($_.HasMfaGrant -or $_.DisplayName -match 'mfa|multifactor|multi-factor')
+        }).Count -gt 0
         $hasDeviceCompliance = $deviceCompliant -gt 0
         $hasHighRiskBlock    = ($policyResults | Where-Object {
             $_.IsEnabled -and $_.DisplayName -match 'risk|Risk'
         }).Count -gt 0
         $hasAdminMfa         = ($policyResults | Where-Object {
-            $_.IsEnabled -and $_.DisplayName -match 'admin|Admin|privileged|Privileged'
+            $_.IsEnabled -and $_.DisplayName -match 'admin|Admin|privileged|Privileged|phishing'
         }).Count -gt 0
 
         $missingPolicies = @()
@@ -246,12 +257,6 @@ function Get-NLSSecureScore {
     return $results
 }
 
-Export-ModuleMember -Function `
-    Get-NLSConditionalAccessPolicies, `
-    Get-NLSConditionalAccessTelemetry, `
-    Get-NLSUserMFAStatus, `
-    Get-NLSSecureScore
-
 function Get-NLSAdminRoleInventory {
     <#
     .SYNOPSIS
@@ -284,10 +289,12 @@ function Get-NLSAdminRoleInventory {
                     IsHighPriv  = $highPrivRoles -contains $role.DisplayName
                     MemberCount = $members.Count
                     Members     = @($members | ForEach-Object {
-                        $upn = if ($Redact) { '[REDACTED_UPN]' } else {
-                            (Get-MgUser -UserId $_.Id -ErrorAction SilentlyContinue).UserPrincipalName
+                        if ($Redact) {
+                            '[REDACTED_UPN]'
+                        } else {
+                            $user = Get-MgUser -UserId $_.Id -ErrorAction SilentlyContinue
+                            if ($user) { $user.UserPrincipalName } else { $null }
                         }
-                        $upn
                     } | Where-Object { $_ })
                 }
             }
@@ -295,7 +302,8 @@ function Get-NLSAdminRoleInventory {
 
         $globalAdmins     = ($roleInventory | Where-Object { $_.RoleName -eq 'Global Administrator' })
         $globalAdminCount = if ($globalAdmins) { $globalAdmins.MemberCount } else { 0 }
-        $highPrivCount    = ($roleInventory | Where-Object { $_.IsHighPriv } | Measure-Object -Property MemberCount -Sum).Sum
+        $highPrivCountRaw = ($roleInventory | Where-Object { $_.IsHighPriv } | Measure-Object -Property MemberCount -Sum).Sum
+        $highPrivCount    = if ($null -eq $highPrivCountRaw) { 0 } else { $highPrivCountRaw }
 
         $results['AdminRoleInventory'] = [ordered]@{
             TotalRolesAssigned  = ($roleInventory | Measure-Object).Count
@@ -330,8 +338,6 @@ function Get-NLSStaleAccounts {
     $results = [ordered]@{}
 
     try {
-        $cutoff   = (Get-Date).AddDays(-$ThresholdDays).ToString('yyyy-MM-ddTHH:mm:ssZ')
-        $filter   = "signInActivity/lastSignInDateTime le $cutoff"
         $allUsers = Get-MgUser -All -Filter "accountEnabled eq true" `
             -Property 'displayName,userPrincipalName,signInActivity,assignedLicenses' `
             -ErrorAction Stop
@@ -398,9 +404,10 @@ function Get-NLSGuestAccountInventory {
             ActiveGuests        = $activeGuests.Count
             StaleGuests         = $staleGuests.Count
             GuestList           = @($guests | ForEach-Object {
-                $upn      = if ($Redact) { '[REDACTED_UPN]' } else { $_.UserPrincipalName }
-                $lastSign = if ($_.SignInActivity) { $_.SignInActivity.LastSignInDateTime } else { 'Never' }
-                [ordered]@{ UPN = $upn; LastSignIn = $lastSign; State = $_.ExternalUserState }
+                $upn         = if ($Redact) { '[REDACTED_UPN]' } else { $_.UserPrincipalName }
+                $displayName = if ($Redact) { '[REDACTED]' } else { $_.DisplayName }
+                $lastSign    = if ($_.SignInActivity) { $_.SignInActivity.LastSignInDateTime } else { 'Never' }
+                [ordered]@{ UPN = $upn; DisplayName = $displayName; LastSignIn = $lastSign; State = $_.ExternalUserState }
             })
         }
 
@@ -432,6 +439,7 @@ function Get-NLSNamedLocations {
             HasNamedLocations = $locations.Count -gt 0
             Locations       = @($locations | ForEach-Object {
                 [ordered]@{
+                    # DisplayName is admin-defined network name, not user PII -- not redacted
                     DisplayName = $_.DisplayName
                     Type        = $_.OdataType
                     IsTrusted   = if ($_.AdditionalProperties.isTrusted) { $true } else { $false }
@@ -474,8 +482,24 @@ function Get-NLSServicePrincipalInventory {
         $servicePrincipals = Get-MgServicePrincipal -All -ErrorAction Stop |
             Where-Object { $_.AppRoles.Count -gt 0 -or $_.Oauth2PermissionScopes.Count -gt 0 }
 
+        # Exclude Microsoft first-party service principals -- these are expected and not a risk
+        $msFirstPartyAppIds = @(
+            '00000003-0000-0000-c000-000000000000', # Microsoft Graph
+            '00000003-0000-0ff1-ce00-000000000000', # Office 365 SharePoint Online
+            '00000002-0000-0ff1-ce00-000000000000', # Office 365 Exchange Online
+            '00000002-0000-0000-c000-000000000000', # Windows Azure Active Directory
+            '00000004-0000-0ff1-ce00-000000000000', # Skype for Business Online
+            '00000006-0000-0ff1-ce00-000000000000', # Microsoft Office
+            '00000007-0000-0ff1-ce00-000000000000', # Common Data Service
+            'c5393580-f805-4401-95e8-94b7a6ef2fc2', # Office 365 Management APIs
+            'fc780465-2017-40d4-a0c5-307022471b92', # Microsoft Teams
+            '00000005-0000-0000-c000-000000000000'  # Microsoft Azure PowerShell
+        )
+
         $highPrivSPs = @($servicePrincipals | Where-Object {
-            $_.AppRoles | Where-Object { $highPrivPermissions -contains $_.Value }
+            $sp = $_
+            -not ($msFirstPartyAppIds -contains $sp.AppId) -and
+            ($sp.AppRoles | Where-Object { $highPrivPermissions -contains $_.Value })
         })
 
         $results['ServicePrincipalInventory'] = [ordered]@{
@@ -483,7 +507,7 @@ function Get-NLSServicePrincipalInventory {
             HighPrivilegeCount     = $highPrivSPs.Count
             HighPrivilegeList      = @($highPrivSPs | ForEach-Object {
                 [ordered]@{
-                    DisplayName = $_.DisplayName
+                    DisplayName = $_.DisplayName  # App display names are not PII
                     AppId       = if ($Redact) { '[REDACTED_ID]' } else { $_.AppId }
                     Publisher   = $_.PublisherName
                 }
@@ -500,6 +524,191 @@ function Get-NLSServicePrincipalInventory {
     return $results
 }
 
+function Get-NLSIdentityHardening {
+    <#
+    .SYNOPSIS
+        Extended identity hardening checks.
+        Covers password protection, SSPR, security defaults, legacy per-user MFA,
+        PIM, consent framework, external collaboration, and authentication methods.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    # ── Security Defaults ────────────────────────────────────
+    try {
+        $secDefaults = Get-MgPolicyIdentitySecurityDefaultEnforcementPolicy -ErrorAction Stop
+        $results['SecurityDefaults'] = [ordered]@{
+            IsEnabled = $secDefaults.IsEnabled
+        }
+        Register-NLSCoverage -ControlFamily 'SecurityDefaults' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSIdentityHardening:SecurityDefaults' -Message 'Failed to check security defaults' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'SecurityDefaults' -Status 'Partial' -Reason $_.Exception.Message
+        $results['SecurityDefaults'] = $null
+    }
+
+    # ── Password Protection ──────────────────────────────────
+    try {
+        $authMethodPolicy = Get-MgPolicyAuthenticationMethodPolicy -ErrorAction Stop
+        $results['PasswordProtection'] = [ordered]@{
+            PolicyDescription = $authMethodPolicy.Description
+            PolicyVersion     = $authMethodPolicy.PolicyVersion
+        }
+        Register-NLSCoverage -ControlFamily 'PasswordProtection' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSIdentityHardening:PasswordProtection' -Message 'Failed to check password protection policy' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'PasswordProtection' -Status 'Partial' -Reason $_.Exception.Message
+        $results['PasswordProtection'] = $null
+    }
+
+    # ── SSPR ─────────────────────────────────────────────────
+    try {
+        $sspr = Get-MgPolicyAuthorizationPolicy -ErrorAction Stop
+        $results['SSPR'] = [ordered]@{
+            AllowedToResetPassword         = $sspr.AllowedToResetPassword
+            DefaultUserRolePermissions     = $sspr.DefaultUserRolePermissions
+        }
+        Register-NLSCoverage -ControlFamily 'SSPR' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSIdentityHardening:SSPR' -Message 'Failed to check SSPR/authorization policy' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'SSPR' -Status 'Partial' -Reason $_.Exception.Message
+        $results['SSPR'] = $null
+    }
+
+    # ── Authentication Methods ───────────────────────────────
+    try {
+        $authMethods = Get-MgPolicyAuthenticationMethodPolicy -ErrorAction Stop
+        $fido2 = $authMethods.AuthenticationMethodConfigurations | Where-Object { $_.Id -eq 'Fido2' }
+        $msAuth = $authMethods.AuthenticationMethodConfigurations | Where-Object { $_.Id -eq 'MicrosoftAuthenticator' }
+        $sms    = $authMethods.AuthenticationMethodConfigurations | Where-Object { $_.Id -eq 'Sms' }
+        $results['AuthenticationMethods'] = [ordered]@{
+            FIDO2Enabled                 = ($fido2 -and $fido2.State -eq 'enabled')
+            MicrosoftAuthenticatorEnabled = ($msAuth -and $msAuth.State -eq 'enabled')
+            SMSEnabled                   = ($sms -and $sms.State -eq 'enabled')
+        }
+        Register-NLSCoverage -ControlFamily 'AuthenticationMethods' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSIdentityHardening:AuthMethods' -Message 'Failed to check authentication methods policy' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'AuthenticationMethods' -Status 'Partial' -Reason $_.Exception.Message
+        $results['AuthenticationMethods'] = $null
+    }
+
+    # ── App Consent Framework ────────────────────────────────
+    try {
+        $authzPolicy = Get-MgPolicyAuthorizationPolicy -ErrorAction Stop
+        $userConsentEnabled = $authzPolicy.DefaultUserRolePermissions.AllowedToCreateApps
+        $results['ConsentFramework'] = [ordered]@{
+            UsersCanConsentToApps        = $userConsentEnabled
+            DefaultUserCanCreateApps     = $authzPolicy.DefaultUserRolePermissions.AllowedToCreateApps
+            DefaultUserCanCreateTenants  = $authzPolicy.DefaultUserRolePermissions.AllowedToCreateTenants
+        }
+        Register-NLSCoverage -ControlFamily 'ConsentFramework' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSIdentityHardening:ConsentFramework' -Message 'Failed to check consent framework policy' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'ConsentFramework' -Status 'Partial' -Reason $_.Exception.Message
+        $results['ConsentFramework'] = $null
+    }
+
+    # ── External Collaboration ───────────────────────────────
+    try {
+        $extCollab = Get-MgPolicyAuthorizationPolicy -ErrorAction Stop
+        $results['ExternalCollaboration'] = [ordered]@{
+            GuestInvitePolicy            = $extCollab.AllowInvitesFrom
+            AllowExternalIdpSignup       = $extCollab.AllowExternalIdpSignup
+        }
+        Register-NLSCoverage -ControlFamily 'ExternalCollaboration' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSIdentityHardening:ExternalCollab' -Message 'Failed to check external collaboration policy' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'ExternalCollaboration' -Status 'Partial' -Reason $_.Exception.Message
+        $results['ExternalCollaboration'] = $null
+    }
+
+    # ── Privileged Identity Management ───────────────────────
+    try {
+        $permanentAdmins = Get-MgDirectoryRole -All -ErrorAction Stop | ForEach-Object {
+            $role = $_
+            $members = Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id -All -ErrorAction SilentlyContinue
+            if ($members.Count -gt 0 -and $role.DisplayName -eq 'Global Administrator') {
+                $members | ForEach-Object {
+                    $upn = if ($Redact) { '[REDACTED_UPN]' } else {
+                        (Get-MgUser -UserId $_.Id -ErrorAction SilentlyContinue).UserPrincipalName
+                    }
+                    $upn
+                }
+            }
+        }
+        $results['PIM'] = [ordered]@{
+            PermanentGlobalAdmins    = @($permanentAdmins | Where-Object { $_ })
+            PermanentGlobalAdminCount = ($permanentAdmins | Where-Object { $_ }).Count
+            Note                     = 'PIM eligibility requires Azure AD P2. Permanent assignments shown above should be reviewed.'
+        }
+        Register-NLSCoverage -ControlFamily 'PIM' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSIdentityHardening:PIM' -Message 'Failed to check PIM/permanent admin assignments' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'PIM' -Status 'Partial' -Reason $_.Exception.Message
+        $results['PIM'] = $null
+    }
+
+    return $results
+}
+
+function Get-NLSBreakGlassAccount {
+    <#
+    .SYNOPSIS
+        Checks break-glass account configuration best practices.
+        Break-glass accounts should be excluded from CA, monitored, and not licensed.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        # Look for accounts commonly named as break-glass
+        $bgKeywords = @('breakglass', 'break-glass', 'break_glass', 'emergency', 'bg-', 'bg_')
+        $allUsers   = Get-MgUser -All -Filter "accountEnabled eq true" `
+            -Property 'displayName,userPrincipalName,assignedLicenses,signInActivity' `
+            -ErrorAction Stop
+
+        $bgAccounts = @($allUsers | Where-Object {
+            $upn = $_.UserPrincipalName.ToLower()
+            $bgKeywords | Where-Object { $upn -like "*$_*" }
+        })
+
+        # Check if break-glass accounts are excluded from CA policies
+        $caPolicies     = Get-MgIdentityConditionalAccessPolicy -All -ErrorAction SilentlyContinue
+        $bgExcludedFromCA = @()
+        $bgNotExcluded    = @()
+
+        foreach ($bg in $bgAccounts) {
+            $excluded = $false
+            foreach ($policy in ($caPolicies | Where-Object { $_.State -eq 'enabled' })) {
+                if ($policy.Conditions.Users.ExcludeUsers -contains $bg.Id) {
+                    $excluded = $true
+                    break
+                }
+            }
+            $upn = if ($Redact) { '[REDACTED_UPN]' } else { $bg.UserPrincipalName }
+            if ($excluded) { $bgExcludedFromCA += $upn } else { $bgNotExcluded += $upn }
+        }
+
+        $results['BreakGlassAccounts'] = [ordered]@{
+            Count             = $bgAccounts.Count
+            ExcludedFromCA    = $bgExcludedFromCA
+            NotExcludedFromCA = $bgNotExcluded
+            Configured        = ($bgAccounts.Count -gt 0 -and $bgNotExcluded.Count -eq 0)
+            Note              = 'Break-glass accounts should be excluded from all CA policies and monitored via alerts.'
+        }
+        Register-NLSCoverage -ControlFamily 'BreakGlassAccounts' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSBreakGlassAccount' -Message 'Failed to check break-glass accounts' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'BreakGlassAccounts' -Status 'Partial' -Reason $_.Exception.Message
+        $results['BreakGlassAccounts'] = $null
+    }
+
+    return $results
+}
+
 Export-ModuleMember -Function `
     Get-NLSConditionalAccessPolicies, `
     Get-NLSConditionalAccessTelemetry, `
@@ -509,4 +718,6 @@ Export-ModuleMember -Function `
     Get-NLSStaleAccounts, `
     Get-NLSGuestAccountInventory, `
     Get-NLSNamedLocations, `
-    Get-NLSServicePrincipalInventory
+    Get-NLSServicePrincipalInventory, `
+    Get-NLSIdentityHardening, `
+    Get-NLSBreakGlassAccount
