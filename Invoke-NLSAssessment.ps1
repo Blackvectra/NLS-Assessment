@@ -116,7 +116,7 @@ param (
     # Profile is applied first, then any explicit flags override.
     [Parameter(Mandatory = $false)]
     [ValidateSet('Quick', 'Standard', 'HIPAA', 'MSP', 'ZeroTrust', 'Full')]
-    [string]$Profile,
+    [string]$P,
     # ─────────────────────────────────────────────────────────
 
     # ── Framework routing flags ───────────────────────────────
@@ -182,8 +182,8 @@ $ErrorActionPreference = 'Continue'
 # Explicit flags passed alongside a profile are additive.
 # Profile sets the baseline -- individual flags expand on top.
 
-if ($Profile) {
-    switch ($Profile) {
+if ($P) {
+    switch ($P) {
 
         'Quick' {
             # Exchange only, NIST, no Graph -- fastest run for initial triage
@@ -247,7 +247,7 @@ if ($Profile) {
             if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))    { $SharedMailboxes    = $true }
         }
     }
-    Write-Host "[*] Profile: $Profile applied" -ForegroundColor Cyan
+    Write-Host "[*] Profile: $P applied" -ForegroundColor Cyan
 }
 
 # ─────────────────────────────────────────────
@@ -291,35 +291,42 @@ if ($args -contains '--help' -or $args -contains '-h') {
     Write-Host 'OUTPUT' -ForegroundColor Yellow
     Write-Host '  -RedactSensitiveData   Scrub UPNs, GUIDs, and IPs from all output'
     Write-Host ''
-    Write-Host 'PROFILES' -ForegroundColor Yellow
-    Write-Host '  -Profile Quick        Exchange only, NIST -- fastest triage'
-    Write-Host '  -Profile Standard     NIST + CIS with full Graph'
-    Write-Host '  -Profile HIPAA        Dual-state HIPAA gap analysis + MFA + DMARC'
-    Write-Host '  -Profile MSP          NIST + CIS + tenant hygiene inventory'
-    Write-Host '  -Profile ZeroTrust    NIST + Zero Trust posture + identity inventory'
-    Write-Host '  -Profile Full         Everything -- all frameworks and features'
+    Write-Host 'PROFILES  (-P <name>)' -ForegroundColor Yellow
     Write-Host ''
-    Write-Host '  Profiles are additive -- pass extra flags to expand on a profile.' -ForegroundColor DarkGray
-    Write-Host '  Example: -Profile MSP -SecureScore adds Secure Score to the MSP profile.' -ForegroundColor DarkGray
+    Write-Host '  Quick' -ForegroundColor White -NoNewline
+    Write-Host '       Exchange only, no Graph, NIST citations -- fastest initial triage'
+    Write-Host '  Standard' -ForegroundColor White -NoNewline
+    Write-Host '     NIST + CIS, full Graph -- general purpose assessment'
+    Write-Host '  HIPAA' -ForegroundColor White -NoNewline
+    Write-Host '        HIPAA current + proposed, MFAReport, AdminRoles, DMARC, SharedMailboxes'
+    Write-Host '  MSP' -ForegroundColor White -NoNewline
+    Write-Host '          NIST + CIS, AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes'
+    Write-Host '  ZeroTrust' -ForegroundColor White -NoNewline
+    Write-Host '    NIST + ZeroTrust, NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts'
+    Write-Host '  Full' -ForegroundColor White -NoNewline
+    Write-Host '         All frameworks + all features'
+    Write-Host ''
+    Write-Host '  Profiles are additive. Extra flags passed alongside -P expand the profile.' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host 'EXAMPLES' -ForegroundColor Yellow
-    Write-Host '  Quick triage -- Exchange only:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Quick' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Quick triage -- Exchange only, no Graph:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  MSP tenant assessment:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile MSP' -ForegroundColor DarkGray
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Healthcare client -- HIPAA dual-state:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile HIPAA -RedactSensitiveData' -ForegroundColor DarkGray
+    Write-Host '  Healthcare client -- dual-state HIPAA, redacted:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  Zero Trust posture assessment:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile ZeroTrust' -ForegroundColor DarkGray
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P ZeroTrust' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Full assessment -- everything:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Full -RedactSensitiveData' -ForegroundColor DarkGray
+    Write-Host '  Full assessment -- everything, redacted:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Profile plus extra flag:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile MSP -SecureScore' -ForegroundColor DarkGray
+    Write-Host '  Profile + extra flag (MSP with Secure Score added):'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  Manual flags -- no profile:'
     Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed' -ForegroundColor DarkGray
@@ -380,8 +387,8 @@ $runServicePrincipals = [bool]$ServicePrincipals -and $runGraph
 $runDMARC             = [bool]$DMARC
 $runSharedMailboxes   = [bool]$SharedMailboxes
 
-if ($Profile) {
-    Write-Host "[*] Profile: $Profile" -ForegroundColor Cyan
+if ($P) {
+    Write-Host "[*] Profile: $P" -ForegroundColor Cyan
 }
 Write-Host '[*] Execution Mode: ' -NoNewline -ForegroundColor Cyan
 if ($NoGraph) {
@@ -680,7 +687,7 @@ if ($runGraph) {
 }
 
 Write-Host '[-] Collecting metadata...' -ForegroundColor DarkGray
-$profileLabel = if ($Profile) { $Profile } else { 'Custom' }
+$profileLabel = if ($P) { $P } else { 'Custom' }
 $metadata = Get-NLSMetadata `
     -Redact $runRedaction `
     -ActiveFrameworks $activeFrameworks `
