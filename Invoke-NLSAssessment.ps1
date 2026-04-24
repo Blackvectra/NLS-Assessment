@@ -437,6 +437,8 @@ if ($NoGraph) {
     Write-Host 'EXCHANGE ONLY (No Graph) ' -NoNewline -ForegroundColor Yellow
 } elseif ($Quick -or $NoTelemetry) {
     Write-Host 'QUICK (No Telemetry) ' -NoNewline -ForegroundColor Yellow
+} elseif ($P) {
+    Write-Host "$P " -NoNewline -ForegroundColor Green
 } else {
     Write-Host 'FULL ' -NoNewline -ForegroundColor Green
 }
