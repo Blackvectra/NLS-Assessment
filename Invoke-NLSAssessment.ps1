@@ -110,6 +110,15 @@ param (
     [Parameter(Mandatory = $false)]
     [switch]$NoGraph,
 
+    # ── Profile flag ─────────────────────────────────────────
+    # Predefined bundles of framework and feature flags.
+    # Individual flags can be added on top of a profile.
+    # Profile is applied first, then any explicit flags override.
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('Quick', 'Standard', 'HIPAA', 'MSP', 'ZeroTrust', 'Full')]
+    [string]$Profile,
+    # ─────────────────────────────────────────────────────────
+
     # ── Framework routing flags ───────────────────────────────
     [Parameter(Mandatory = $false)]
     [switch]$NIST,
@@ -167,6 +176,81 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
 # ─────────────────────────────────────────────
+# Profile Resolution
+# ─────────────────────────────────────────────
+# Profiles are applied before individual flags.
+# Explicit flags passed alongside a profile are additive.
+# Profile sets the baseline -- individual flags expand on top.
+
+if ($Profile) {
+    switch ($Profile) {
+
+        'Quick' {
+            # Exchange only, NIST, no Graph -- fastest run for initial triage
+            if (-not $PSBoundParameters.ContainsKey('NoGraph')) { $NoGraph = $true }
+            if (-not $PSBoundParameters.ContainsKey('NIST'))    { $NIST    = $true }
+        }
+
+        'Standard' {
+            # NIST + CIS with full Graph -- general purpose assessment
+            if (-not $PSBoundParameters.ContainsKey('NIST')) { $NIST = $true }
+            if (-not $PSBoundParameters.ContainsKey('CIS'))  { $CIS  = $true }
+        }
+
+        'HIPAA' {
+            # Healthcare client -- dual-state HIPAA gap analysis with email auth and MFA
+            if (-not $PSBoundParameters.ContainsKey('HIPAA'))         { $HIPAA         = $true }
+            if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))  { $HIPAAProposed = $true }
+            if (-not $PSBoundParameters.ContainsKey('DMARC'))          { $DMARC         = $true }
+            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes')){ $SharedMailboxes = $true }
+            if (-not $PSBoundParameters.ContainsKey('MFAReport'))      { $MFAReport     = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))     { $AdminRoles    = $true }
+        }
+
+        'MSP' {
+            # MSP tenant assessment -- NIST + CIS with tenant hygiene inventory
+            if (-not $PSBoundParameters.ContainsKey('NIST'))           { $NIST           = $true }
+            if (-not $PSBoundParameters.ContainsKey('CIS'))            { $CIS            = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))     { $AdminRoles     = $true }
+            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))  { $StaleAccounts  = $true }
+            if (-not $PSBoundParameters.ContainsKey('GuestInventory')) { $GuestInventory = $true }
+            if (-not $PSBoundParameters.ContainsKey('DMARC'))          { $DMARC          = $true }
+            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes')){ $SharedMailboxes = $true }
+        }
+
+        'ZeroTrust' {
+            # Zero Trust posture assessment -- identity and devices pillars
+            if (-not $PSBoundParameters.ContainsKey('NIST'))               { $NIST               = $true }
+            if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))          { $ZeroTrust          = $true }
+            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))     { $NamedLocations     = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))         { $AdminRoles         = $true }
+            if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport          = $true }
+            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals'))  { $ServicePrincipals  = $true }
+            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))      { $StaleAccounts      = $true }
+        }
+
+        'Full' {
+            # Everything -- all frameworks, all features, all inventory
+            if (-not $PSBoundParameters.ContainsKey('NIST'))               { $NIST               = $true }
+            if (-not $PSBoundParameters.ContainsKey('CIS'))                { $CIS                = $true }
+            if (-not $PSBoundParameters.ContainsKey('HIPAA'))              { $HIPAA              = $true }
+            if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))      { $HIPAAProposed      = $true }
+            if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))          { $ZeroTrust          = $true }
+            if (-not $PSBoundParameters.ContainsKey('SecureScore'))        { $SecureScore        = $true }
+            if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport          = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))         { $AdminRoles         = $true }
+            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))      { $StaleAccounts      = $true }
+            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))     { $GuestInventory     = $true }
+            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))     { $NamedLocations     = $true }
+            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals'))  { $ServicePrincipals  = $true }
+            if (-not $PSBoundParameters.ContainsKey('DMARC'))              { $DMARC              = $true }
+            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))    { $SharedMailboxes    = $true }
+        }
+    }
+    Write-Host "[*] Profile: $Profile applied" -ForegroundColor Cyan
+}
+
+# ─────────────────────────────────────────────
 # Custom Help Output
 # ─────────────────────────────────────────────
 
@@ -207,21 +291,38 @@ if ($args -contains '--help' -or $args -contains '-h') {
     Write-Host 'OUTPUT' -ForegroundColor Yellow
     Write-Host '  -RedactSensitiveData   Scrub UPNs, GUIDs, and IPs from all output'
     Write-Host ''
+    Write-Host 'PROFILES' -ForegroundColor Yellow
+    Write-Host '  -Profile Quick        Exchange only, NIST -- fastest triage'
+    Write-Host '  -Profile Standard     NIST + CIS with full Graph'
+    Write-Host '  -Profile HIPAA        Dual-state HIPAA gap analysis + MFA + DMARC'
+    Write-Host '  -Profile MSP          NIST + CIS + tenant hygiene inventory'
+    Write-Host '  -Profile ZeroTrust    NIST + Zero Trust posture + identity inventory'
+    Write-Host '  -Profile Full         Everything -- all frameworks and features'
+    Write-Host ''
+    Write-Host '  Profiles are additive -- pass extra flags to expand on a profile.' -ForegroundColor DarkGray
+    Write-Host '  Example: -Profile MSP -SecureScore adds Secure Score to the MSP profile.' -ForegroundColor DarkGray
+    Write-Host ''
     Write-Host 'EXAMPLES' -ForegroundColor Yellow
     Write-Host '  Quick triage -- Exchange only:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NoGraph -NIST' -ForegroundColor DarkGray
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Quick' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Healthcare client -- dual-state HIPAA gap analysis:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -RedactSensitiveData' -ForegroundColor DarkGray
+    Write-Host '  MSP tenant assessment:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile MSP' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Full framework stack:'
+    Write-Host '  Healthcare client -- HIPAA dual-state:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile HIPAA -RedactSensitiveData' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Zero Trust posture assessment:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile ZeroTrust' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Full assessment -- everything:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Full -RedactSensitiveData' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Profile plus extra flag:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile MSP -SecureScore' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Manual flags -- no profile:'
     Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Full v2 stack -- all features:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Redacted output for client delivery:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -RedactSensitiveData' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host 'PERMISSIONS' -ForegroundColor Yellow
     Write-Host '  Exchange Admin or Global Admin   Exchange Online collection'
@@ -279,6 +380,9 @@ $runServicePrincipals = [bool]$ServicePrincipals -and $runGraph
 $runDMARC             = [bool]$DMARC
 $runSharedMailboxes   = [bool]$SharedMailboxes
 
+if ($Profile) {
+    Write-Host "[*] Profile: $Profile" -ForegroundColor Cyan
+}
 Write-Host '[*] Execution Mode: ' -NoNewline -ForegroundColor Cyan
 if ($NoGraph) {
     Write-Host 'EXCHANGE ONLY (No Graph) ' -NoNewline -ForegroundColor Yellow
@@ -576,11 +680,12 @@ if ($runGraph) {
 }
 
 Write-Host '[-] Collecting metadata...' -ForegroundColor DarkGray
+$profileLabel = if ($Profile) { $Profile } else { 'Custom' }
 $metadata = Get-NLSMetadata `
     -Redact $runRedaction `
     -ActiveFrameworks $activeFrameworks `
     -ActiveFeatures $activeFeatures `
-    -ExecutionMode ($activeFrameworks -join '+')
+    -ExecutionMode $profileLabel
 
 Write-Host ''
 
