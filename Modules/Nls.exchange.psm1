@@ -53,7 +53,7 @@ function Get-NLSExchangePolicies {
     try {
         $remoteDomain        = Get-RemoteDomain Default -ErrorAction Stop
         $forwardingMailboxes = Get-Mailbox -ResultSize Unlimited -ErrorAction Stop |
-            Where-Object { $_.ForwardingAddress -ne $null -or $_.ForwardingSmtpAddress -ne $null }
+            Where-Object { $null -ne $_.ForwardingAddress -or $null -ne $_.ForwardingSmtpAddress }
         $results['ExternalForwarding'] = [ordered]@{
             AutoForwardDisabled     = ($remoteDomain.AutoForwardEnabled -eq $false)
             MailboxesWithForwarding = $forwardingMailboxes.Count
@@ -147,7 +147,14 @@ function Get-NLSExchangePolicies {
         $atpPolicy   = Get-AtpPolicyForO365 -ErrorAction Stop
         $results['DefenderO365'] = [ordered]@{
             SafeAttachmentBlockEnabled = ($safeAttach | Where-Object { $_.Action -eq 'Block' -and $_.Enable -eq $true }).Count -gt 0
-            SafeLinksEnabled           = ($safeLinks | Where-Object { $_.IsEnabled -eq $true -or $_.Enabled -eq $true }).Count -gt 0
+            SafeLinksEnabled           = ($safeLinks | Where-Object {
+                $_.IsEnabled -eq $true -or
+                $_.Enabled -eq $true -or
+                $_.EnableSafeLinksForEmail -eq $true -or
+                $_.EnableSafeLinksForTeams -eq $true -or
+                $_.EnableSafeLinksForOffice -eq $true -or
+                ($null -ne $_.TrackClicks)  # Policy exists and has settings = enabled
+            }).Count -gt 0
             AntiPhishEnabled           = ($antiPhish | Where-Object { $_.Enabled -eq $true }).Count -gt 0
             MailboxIntelligenceEnabled = ($antiPhish | Where-Object { $_.EnableMailboxIntelligence -eq $true }).Count -gt 0
             ZapSpamEnabled             = ($contentFilt | Where-Object { $_.SpamZapEnabled -eq $true }).Count -gt 0
@@ -177,20 +184,58 @@ function Get-NLSExchangePolicies {
         $results['DKIM'] = $null
     }
 
-    # ── DNSSEC -- v2: granular domain lists ──────────────────
+    # ── DNSSEC -- v2: live DNS lookup + EXO check ────────────
     try {
         $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
         $dnssecResults = foreach ($domain in $acceptedDomains) {
+            $domainName = $domain.DomainName
+            $dnssecEnabled = $false
+            $dnssecStatus  = 'Unknown'
+            $dnssecSource  = 'DNS'
+
+            # Check Exchange Online DNSSEC status first (Microsoft-managed)
             try {
-                $dnssec = Get-DnssecStatusForVerifiedDomain -DomainName $domain.DomainName -ErrorAction Stop
-                [ordered]@{ Domain = $domain.DomainName; Enabled = ($dnssec.DnssecFeatureStatus -eq 'Enabled'); Status = $dnssec.DnssecFeatureStatus }
+                $exoDnssec = Get-DnssecStatusForVerifiedDomain -DomainName $domainName -ErrorAction Stop
+                # Status can be: Enabled, Disabled, or other values -- check for any non-disabled state
+                $exoStatus = $exoDnssec.DnssecFeatureStatus
+                if ($exoStatus -and $exoStatus -ne 'Disabled' -and $exoStatus -ne 'NotSupported') {
+                    $dnssecEnabled = $true
+                    $dnssecStatus  = "Enabled via Microsoft ($exoStatus)"
+                    $dnssecSource  = 'EXO'
+                } else {
+                    $dnssecStatus = "Not enabled ($exoStatus)"
+                }
             } catch {
-                Register-NLSException -Source 'Get-NLSExchangePolicies:DNSSEC' -Message "DNSSEC check failed for $($domain.DomainName)" -ErrorDetails $_.Exception.Message
-                [ordered]@{ Domain = $domain.DomainName; Enabled = $false; Status = 'CheckFailed' }
+                $dnssecStatus = 'EXO check failed'
+            }
+
+            # Fall back to live DNS DNSKEY lookup if EXO says not enabled
+            if (-not $dnssecEnabled) {
+                try {
+                    $dnsResult = Resolve-DnsName -Name $domainName -Type DNSKEY -ErrorAction Stop
+                    if ($dnsResult) {
+                        $dnssecEnabled = $true
+                        $dnssecStatus  = 'Enabled (DNS DNSKEY verified)'
+                        $dnssecSource  = 'DNS'
+                    }
+                } catch {
+                    # No DNSKEY record found at DNS level either
+                    if (-not $dnssecEnabled) {
+                        $dnssecStatus = 'Not enabled -- no DNSKEY record in DNS'
+                    }
+                }
+            }
+
+            [ordered]@{
+                Domain  = $domainName
+                Enabled = $dnssecEnabled
+                Status  = $dnssecStatus
+                Source  = $dnssecSource
             }
         }
+
         $results['DNSSEC'] = [ordered]@{
-            Domains        = @($dnssecResults)
+            Domains         = @($dnssecResults)
             DisabledDomains = @($dnssecResults | Where-Object { -not $_.Enabled } | ForEach-Object { $_.Domain })
         }
         Register-NLSCoverage -ControlFamily 'DNSSEC' -Status 'Collected'
@@ -202,8 +247,6 @@ function Get-NLSExchangePolicies {
 
     return $results
 }
-
-Export-ModuleMember -Function Get-NLSExchangePolicies
 
 function Get-NLSDMARCStatus {
     <#
@@ -316,4 +359,198 @@ function Get-NLSSharedMailboxHardening {
     return $results
 }
 
-Export-ModuleMember -Function Get-NLSExchangePolicies, Get-NLSDMARCStatus, Get-NLSSharedMailboxHardening
+function Get-NLSDNSEmailRecords {
+    <#
+    .SYNOPSIS
+        Looks up actual DNS records for SPF, DMARC, and DKIM per accepted domain.
+        Surfaces the live record values so you can see exactly what is published.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
+        $dkimConfigs     = Get-DkimSigningConfig -ErrorAction SilentlyContinue
+
+        $domainRecords = foreach ($domain in $acceptedDomains) {
+            $d = $domain.DomainName
+
+            # SPF
+            $spfRecord = $null
+            try {
+                $spfLookup = Resolve-DnsName -Name $d -Type TXT -ErrorAction Stop
+                $spfRecord = ($spfLookup | Where-Object { $_.Strings -match 'v=spf1' } |
+                    Select-Object -ExpandProperty Strings -First 1) -join ''
+            } catch { }
+
+            # DMARC
+            $dmarcRecord = $null
+            $dmarcPolicy = 'missing'
+            $dmarcPct    = $null
+            $dmarcRua    = $null
+            try {
+                $dmarcLookup = Resolve-DnsName -Name "_dmarc.$d" -Type TXT -ErrorAction Stop
+                $dmarcRecord = ($dmarcLookup | Where-Object { $_.Strings -match 'v=DMARC1' } |
+                    Select-Object -ExpandProperty Strings -First 1) -join ''
+                if ($dmarcRecord) {
+                    if ($dmarcRecord -match 'p=([a-z]+)')   { $dmarcPolicy = $Matches[1] }
+                    if ($dmarcRecord -match 'pct=(\d+)')    { $dmarcPct    = [int]$Matches[1] }
+                    if ($dmarcRecord -match 'rua=([^;]+)')  { $dmarcRua    = $Matches[1].Trim() }
+                }
+            } catch { }
+
+            # DKIM -- check selector1 and selector2 (M365 defaults)
+            $dkimSelectors = [ordered]@{}
+            foreach ($selector in @('selector1', 'selector2')) {
+                try {
+                    $dkimLookup = Resolve-DnsName -Name "$selector._domainkey.$d" -Type CNAME -ErrorAction Stop
+                    $dkimSelectors[$selector] = [ordered]@{
+                        Found  = $true
+                        Target = $dkimLookup.NameHost
+                    }
+                } catch {
+                    $dkimSelectors[$selector] = [ordered]@{
+                        Found  = $false
+                        Target = $null
+                    }
+                }
+            }
+
+            # DKIM enabled in EXO
+            $dkimEnabled = $false
+            if ($dkimConfigs) {
+                $dkimConfig  = $dkimConfigs | Where-Object { $_.Domain -eq $d }
+                $dkimEnabled = if ($dkimConfig) { $dkimConfig.Enabled } else { $false }
+            }
+
+            [ordered]@{
+                Domain       = $d
+                SPF          = [ordered]@{
+                    Record   = $spfRecord
+                    Found    = ($null -ne $spfRecord)
+                    Valid    = ($spfRecord -match 'v=spf1')
+                }
+                DMARC        = [ordered]@{
+                    Record   = $dmarcRecord
+                    Found    = ($null -ne $dmarcRecord)
+                    Policy   = $dmarcPolicy
+                    Pct      = $dmarcPct
+                    RUA      = $dmarcRua
+                    Enforced = ($dmarcPolicy -eq 'reject')
+                }
+                DKIM         = [ordered]@{
+                    EnabledInEXO = $dkimEnabled
+                    Selectors    = $dkimSelectors
+                    BothFound    = ($dkimSelectors['selector1'].Found -and $dkimSelectors['selector2'].Found)
+                }
+            }
+        }
+
+        $results['DNSEmailRecords'] = [ordered]@{
+            Domains          = @($domainRecords)
+            SPFMissingCount  = ($domainRecords | Where-Object { -not $_.SPF.Found }).Count
+            DMARCMissingCount = ($domainRecords | Where-Object { -not $_.DMARC.Found }).Count
+            DMARCNoneCount   = ($domainRecords | Where-Object { $_.DMARC.Policy -eq 'none' }).Count
+            DKIMMissingCount = ($domainRecords | Where-Object { -not $_.DKIM.BothFound }).Count
+        }
+
+        Register-NLSCoverage -ControlFamily 'DNSEmailRecords' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSDNSEmailRecords' -Message 'Failed to retrieve DNS email records' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'DNSEmailRecords' -Status 'Partial' -Reason $_.Exception.Message
+        $results['DNSEmailRecords'] = $null
+    }
+
+    return $results
+}
+
+function Get-NLSMailFlowHardening {
+    <#
+    .SYNOPSIS
+        Extended mail flow and anti-spam hardening checks.
+        Covers MTA-STS, inbound spam policy, malware filter, quarantine policy.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    # ── MTA-STS ──────────────────────────────────────────────
+    try {
+        $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
+        $mtaStsResults = foreach ($domain in $acceptedDomains) {
+            $mtaStsEnabled = $false
+            $mtaStsMode    = 'none'
+            try {
+                $mtaRecord = Resolve-DnsName -Name "_mta-sts.$($domain.DomainName)" -Type TXT -ErrorAction Stop
+                $mtaTxt    = $mtaRecord | Where-Object { $_.Strings -match 'v=STSv1' }
+                if ($mtaTxt) {
+                    $mtaStsEnabled = $true
+                    if ($mtaTxt.Strings -match 'id=') { $mtaStsMode = 'published' }
+                }
+            } catch { }
+            [ordered]@{ Domain = $domain.DomainName; MTAStsEnabled = $mtaStsEnabled; Mode = $mtaStsMode }
+        }
+        $results['MTASTS'] = [ordered]@{
+            Domains      = @($mtaStsResults)
+            EnabledCount = ($mtaStsResults | Where-Object { $_.MTAStsEnabled }).Count
+            TotalDomains = $acceptedDomains.Count
+        }
+        Register-NLSCoverage -ControlFamily 'MTASTS' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSMailFlowHardening:MTASTS' -Message 'Failed to check MTA-STS' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'MTASTS' -Status 'Partial' -Reason $_.Exception.Message
+        $results['MTASTS'] = $null
+    }
+
+    # ── Inbound Anti-Spam ────────────────────────────────────
+    try {
+        $spamPolicies = Get-HostedContentFilterPolicy -ErrorAction Stop
+        $defaultPolicy = $spamPolicies | Where-Object { $_.IsDefault } | Select-Object -First 1
+        if (-not $defaultPolicy) { $defaultPolicy = $spamPolicies | Select-Object -First 1 }
+        $results['InboundSpam'] = [ordered]@{
+            HighConfidenceSpamAction = $defaultPolicy.HighConfidenceSpamAction
+            SpamAction               = $defaultPolicy.SpamAction
+            PhishSpamAction          = $defaultPolicy.PhishSpamAction
+            BulkThreshold            = $defaultPolicy.BulkThreshold
+            ZapEnabled               = $defaultPolicy.SpamZapEnabled
+            QuarantineRetentionDays  = $defaultPolicy.QuarantineRetentionPeriod
+            Hardened                 = (
+                $defaultPolicy.HighConfidenceSpamAction -in @('Quarantine', 'Delete') -and
+                $defaultPolicy.PhishSpamAction -in @('Quarantine', 'Delete') -and
+                $defaultPolicy.BulkThreshold -le 6
+            )
+        }
+        Register-NLSCoverage -ControlFamily 'InboundSpam' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSMailFlowHardening:InboundSpam' -Message 'Failed to check inbound spam policy' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'InboundSpam' -Status 'Partial' -Reason $_.Exception.Message
+        $results['InboundSpam'] = $null
+    }
+
+    # ── Malware Filter ───────────────────────────────────────
+    try {
+        $malwarePolicies = Get-MalwareFilterPolicy -ErrorAction Stop
+        $defaultMalware  = $malwarePolicies | Where-Object { $_.IsDefault } | Select-Object -First 1
+        if (-not $defaultMalware) { $defaultMalware = $malwarePolicies | Select-Object -First 1 }
+        $results['MalwareFilter'] = [ordered]@{
+            Action                    = $defaultMalware.Action
+            EnableFileFilter          = $defaultMalware.EnableFileFilter
+            ZapEnabled                = $defaultMalware.ZapEnabled
+            NotifyAdmin               = $defaultMalware.EnableInternalSenderNotifications -or $defaultMalware.EnableExternalSenderNotifications
+            Hardened                  = (
+                $defaultMalware.Action -eq 'DeleteMessage' -and
+                $defaultMalware.ZapEnabled -eq $true
+            )
+        }
+        Register-NLSCoverage -ControlFamily 'MalwareFilter' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSMailFlowHardening:MalwareFilter' -Message 'Failed to check malware filter policy' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'MalwareFilter' -Status 'Partial' -Reason $_.Exception.Message
+        $results['MalwareFilter'] = $null
+    }
+
+    return $results
+}
+
+Export-ModuleMember -Function Get-NLSExchangePolicies, Get-NLSDMARCStatus, Get-NLSSharedMailboxHardening, Get-NLSDNSEmailRecords, Get-NLSMailFlowHardening
