@@ -146,6 +146,88 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
 # ─────────────────────────────────────────────
+# Custom Help Output
+# ─────────────────────────────────────────────
+
+if ($args -contains '--help' -or $args -contains '-h') {
+    Write-Host ''
+    Write-Host '================================================================' -ForegroundColor Cyan
+    Write-Host '  NextLayerSec M365 Assessment Framework v2' -ForegroundColor White
+    Write-Host '  nextlayersec.io' -ForegroundColor DarkGray
+    Write-Host '================================================================' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host 'USAGE' -ForegroundColor Yellow
+    Write-Host '  .\Invoke-NLSAssessment.ps1 [flags]'
+    Write-Host ''
+    Write-Host 'CONNECTION' -ForegroundColor Yellow
+    Write-Host '  -UserPrincipalName     Admin UPN for Exchange Online and Graph'
+    Write-Host '  -SkipConnect           Skip connection if already authenticated'
+    Write-Host '  -NoGraph               Exchange Online only -- no Graph required'
+    Write-Host '  -Quick                 Skip sign-in log telemetry'
+    Write-Host '  -NoTelemetry           Same as -Quick'
+    Write-Host ''
+    Write-Host 'FRAMEWORKS' -ForegroundColor Yellow
+    Write-Host '  -NIST                  NIST SP 800-53 Rev 5 Release 5.2.0'
+    Write-Host '  -CIS                   CIS Controls v8.1 June 2024'
+    Write-Host '  -HIPAA                 HIPAA Security Rule 45 CFR 164.312 (current)'
+    Write-Host '  -HIPAAProposed         HIPAA NPRM December 2024 (proposed -- final May 2026)'
+    Write-Host '  -ZeroTrust             CISA Zero Trust Maturity Model 2023'
+    Write-Host ''
+    Write-Host '  Pass one or more framework flags. Default is -NIST when none specified.' -ForegroundColor DarkGray
+    Write-Host '  Use -HIPAA -HIPAAProposed together for dual-state gap analysis.' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host 'FEATURES' -ForegroundColor Yellow
+    Write-Host '  -SecureScore           Microsoft Secure Score integration'
+    Write-Host '                         Requires SecurityEvents.Read.All scope'
+    Write-Host '  -MFAReport             Per-user MFA registration status'
+    Write-Host '                         Requires Reports.Read.All scope'
+    Write-Host '  -OpenReport            Auto-open AssessmentSummary.md on completion'
+    Write-Host ''
+    Write-Host 'OUTPUT' -ForegroundColor Yellow
+    Write-Host '  -RedactSensitiveData   Scrub UPNs, GUIDs, and IPs from all output'
+    Write-Host ''
+    Write-Host 'EXAMPLES' -ForegroundColor Yellow
+    Write-Host '  Quick triage -- Exchange only:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NoGraph -NIST' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Healthcare client -- dual-state HIPAA gap analysis:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -RedactSensitiveData' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Full framework stack:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Full v2 stack -- all features:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Redacted output for client delivery:'
+    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -RedactSensitiveData' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host 'PERMISSIONS' -ForegroundColor Yellow
+    Write-Host '  Exchange Admin or Global Admin   Exchange Online collection'
+    Write-Host '  Policy.Read.ConditionalAccess    CA policy collection'
+    Write-Host '  Directory.Read.All               Graph directory access'
+    Write-Host '  AuditLog.Read.All                Sign-in telemetry (Full mode)'
+    Write-Host '  Reports.Read.All                 User MFA registration (-MFAReport)'
+    Write-Host '  SecurityEvents.Read.All          Secure Score (-SecureScore)'
+    Write-Host ''
+    Write-Host 'TROUBLESHOOTING' -ForegroundColor Yellow
+    Write-Host '  CA Partial on Global Admin -- stale token:'
+    Write-Host '    Disconnect-MgGraph; Remove-Item "$env:USERPROFILE\.mg" -Recurse -Force' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Defender cmdlets not found -- licensing gap:'
+    Write-Host '    Tenant requires M365 Business Premium or Defender for O365 Plan 1+' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Script blocked on first run:'
+    Write-Host '    Unblock-File -Path .\Invoke-NLSAssessment.ps1; Unblock-File -Path .\Modules\*.psm1' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '================================================================' -ForegroundColor Cyan
+    Write-Host '  See README.md for full documentation' -ForegroundColor DarkGray
+    Write-Host '================================================================' -ForegroundColor Cyan
+    Write-Host ''
+    exit 0
+}
+
+# ─────────────────────────────────────────────
 # Hard Runtime Safeguard Banner
 # ─────────────────────────────────────────────
 
@@ -370,7 +452,11 @@ if ($runGraph) {
 }
 
 Write-Host '[-] Collecting metadata...' -ForegroundColor DarkGray
-$metadata = Get-NLSMetadata -Redact $runRedaction
+$metadata = Get-NLSMetadata `
+    -Redact $runRedaction `
+    -ActiveFrameworks $activeFrameworks `
+    -ActiveFeatures $activeFeatures `
+    -ExecutionMode ($activeFrameworks -join '+')
 
 Write-Host ''
 
@@ -396,6 +482,15 @@ if ($PSBoundParameters.ContainsKey('NIST'))          { $scoringParams.NIST      
 if ($PSBoundParameters.ContainsKey('CIS'))           { $scoringParams.CIS           = $CIS.IsPresent }
 if ($PSBoundParameters.ContainsKey('HIPAA'))         { $scoringParams.HIPAA         = $HIPAA.IsPresent }
 if ($PSBoundParameters.ContainsKey('HIPAAProposed')) { $scoringParams.HIPAAProposed = $HIPAAProposed.IsPresent }
+
+# Default to NIST only when no framework flag was explicitly passed
+if (-not ($PSBoundParameters.ContainsKey('NIST') -or
+          $PSBoundParameters.ContainsKey('CIS') -or
+          $PSBoundParameters.ContainsKey('HIPAA') -or
+          $PSBoundParameters.ContainsKey('HIPAAProposed') -or
+          $PSBoundParameters.ContainsKey('ZeroTrust'))) {
+    $scoringParams.NIST = $true
+}
 
 $scoredResults = Invoke-NLSScoringModel @scoringParams
 
