@@ -33,10 +33,7 @@
 
 param(
     [Parameter(Mandatory = $false)]
-    [string]$OutputDir,
-
-    [Parameter(Mandatory = $false)]
-    [string]$OutputPath
+    [string]$OutputDir
 )
 
 Set-StrictMode -Version Latest
@@ -52,7 +49,7 @@ if (-not (Test-Path $OutputDir)) {
 }
 
 $dateStamp  = (Get-Date).ToString('yyyyMMdd')
-if (-not $OutputPath) { $OutputPath = Join-Path $OutputDir "NLS-Portfolio-$dateStamp.md" }
+$OutputPath = Join-Path $OutputDir "NLS-Portfolio-$dateStamp.md" 
 
 Write-Host ''
 Write-Host '================================================================' -ForegroundColor Cyan
@@ -166,10 +163,10 @@ foreach ($t in $tenantResults) {
 [void]$sb.AppendLine('')
 
 # ── Portfolio totals ──────────────────────────────────────────
-$totalGap       = ($tenantResults | Measure-Object -Property Gap -Sum).Sum
-$totalPartial   = ($tenantResults | Measure-Object -Property Partial -Sum).Sum
-$totalSatisfied = ($tenantResults | Measure-Object -Property Satisfied -Sum).Sum
-$totalChecks    = ($tenantResults | Measure-Object -Property Total -Sum).Sum
+$totalGap       = [int](($tenantResults | ForEach-Object { [int]$_.Gap }       | Measure-Object -Sum).Sum)
+$totalPartial   = [int](($tenantResults | ForEach-Object { [int]$_.Partial }   | Measure-Object -Sum).Sum)
+$totalSatisfied = [int](($tenantResults | ForEach-Object { [int]$_.Satisfied } | Measure-Object -Sum).Sum)
+$totalChecks    = [int](($tenantResults | ForEach-Object { [int]$_.Total }     | Measure-Object -Sum).Sum)
 
 [void]$sb.AppendLine('## Portfolio Totals')
 [void]$sb.AppendLine('')
