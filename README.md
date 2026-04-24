@@ -21,6 +21,7 @@
 
 | Feature | Description |
 |---|---|
+| Assessment profiles | `-P Quick/Standard/HIPAA/MSP/ZeroTrust/Full` — predefined flag bundles |
 | Granular finding detail | Affected object lists on every count-based finding |
 | Current state vs recommended | Structured comparison table per finding |
 | Per-framework recommendation blocks | Each framework gets its own section with control name, detail, and requirement level |
@@ -39,7 +40,6 @@
 | Named location check | Zero Trust gap warning if no named locations defined (`-NamedLocations`) |
 | Service principal inventory | High-privilege app detection (`-ServicePrincipals`) |
 | Shared mailbox hardening | Interactive sign-in and legacy protocol check (`-SharedMailboxes`) |
-| Assessment profiles | `-P Quick/Standard/HIPAA/MSP/ZeroTrust/Full` -- predefined flag bundles |
 | Custom help output | `.\Invoke-NLSAssessment.ps1 --help` |
 | Security hardening | UPN input validation, module integrity check, output path locking, exceptions redaction fix |
 
@@ -51,7 +51,7 @@
 
 **No tenant configuration changes are made at any point.**
 
-Each finding is state-aware — returning Satisfied, Partial, or Gap — with citations mapped to the specific control that requires or recommends the configuration. v2 adds affected object lists, current state vs recommended comparisons, per-framework recommendation blocks, and extended data sections for tenant security inventory.
+Each finding is state-aware — returning Satisfied, Partial, or Gap — with citations mapped to the specific control that requires or recommends the configuration.
 
 ---
 
@@ -102,13 +102,13 @@ Each finding is state-aware — returning Satisfied, Partial, or Gap — with ci
 | HIPAA Security Rule NPRM | December 27 2024 proposed rule | `-HIPAAProposed` |
 | CISA Zero Trust Maturity Model | 2023 | `-ZeroTrust` |
 
-**Default behavior:** When no framework flag is passed, `-NIST` is applied automatically. This is the only case where NIST applies without being explicitly passed. If you pass `-HIPAA` without `-NIST`, you get HIPAA only.
+**Default behavior:** When no framework flag is passed, `-NIST` is applied automatically. If you pass `-HIPAA` without `-NIST`, you get HIPAA only.
 
 ### HIPAA NPRM Note
 
 The December 2024 NPRM proposes eliminating the required/addressable distinction across all implementation specifications. Expected final rule: May 2026 with a 240-day compliance window.
 
-Running `-HIPAA -HIPAAProposed` together produces a dual-state gap analysis showing current compliance posture alongside exposure against the incoming mandatory standard. Recommended for all healthcare client engagements.
+Running `-HIPAA -HIPAAProposed` together produces a dual-state gap analysis. Recommended for all healthcare client engagements.
 
 ### Finding States
 
@@ -117,6 +117,99 @@ Running `-HIPAA -HIPAAProposed` together produces a dual-state gap analysis show
 | Gap | High | Control is missing or disabled |
 | Partial | Medium | Control exists but not fully enforced |
 | Satisfied | Pass | Control is enabled and enforced |
+
+---
+
+## Profiles
+
+Profiles are predefined bundles of framework and feature flags. Use `-P` instead of typing long flag lists. Profiles are additive — pass additional flags alongside `-P` to expand.
+
+| Profile | Syntax | Frameworks | Features Included |
+|---|---|---|---|
+| Quick | `-P Quick` | NIST | Exchange only, no Graph — fastest triage |
+| Standard | `-P Standard` | NIST, CIS | Full Graph — general purpose assessment |
+| HIPAA | `-P HIPAA` | HIPAA, HIPAAProposed | MFAReport, AdminRoles, DMARC, SharedMailboxes |
+| MSP | `-P MSP` | NIST, CIS | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes |
+| ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts |
+| Full | `-P Full` | All frameworks | All features |
+
+### Why Profiles
+
+Before:
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport -AdminRoles -StaleAccounts -GuestInventory -NamedLocations -ServicePrincipals -DMARC -SharedMailboxes
+```
+
+After:
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full
+```
+
+---
+
+## Usage
+
+### Get Help
+
+```powershell
+.\Invoke-NLSAssessment.ps1 --help
+```
+
+Displays branded help with the full profile table, all flags, examples, permissions, and troubleshooting.
+
+### Profile Examples
+
+```powershell
+# Quick triage -- Exchange only, no Graph
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick
+
+# General purpose assessment
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Standard
+
+# MSP tenant assessment
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
+
+# Healthcare client -- dual-state HIPAA, redacted output
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData
+
+# Zero Trust posture assessment
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P ZeroTrust
+
+# Full assessment -- everything, redacted
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData
+
+# Profile expanded with extra flag
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore -OpenReport
+
+# Profile expanded with multiple extra flags
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -ZeroTrust -SecureScore -RedactSensitiveData
+```
+
+### Manual Flags (No Profile)
+
+Use individual flags for custom combinations:
+
+```powershell
+# NIST + CIS with DMARC only
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -DMARC
+
+# Exchange only, HIPAA dual-state, redacted
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NoGraph -HIPAA -HIPAAProposed -RedactSensitiveData
+```
+
+### Redacted Output
+
+Pass `-RedactSensitiveData` with any profile or flag combination. Scrubs UPNs, GUIDs, IP addresses, and tenant-specific URLs from all output including the exceptions log.
+
+### Navigate to Tool Directory
+
+```powershell
+# Option 1 -- PowerShell shorthand
+cd ~\Downloads\NLS-Assessment
+
+# Option 2 -- Right-click folder in File Explorer
+# Select "Open in Terminal" -- opens PowerShell 7 in the correct directory
+```
 
 ---
 
@@ -146,7 +239,7 @@ NLS-Assessment/
 
 ### Data and Logic Separation
 
-`NLS.FrameworkDictionary.psm1` contains only compliance mapping data. When a framework releases a new version, only this file changes. The scoring engine, orchestrator, and reporting module are untouched.
+`NLS.FrameworkDictionary.psm1` contains only compliance mapping data. When a framework releases a new version, only this file changes.
 
 Update procedure:
 1. Open `NLS.FrameworkDictionary.psm1`
@@ -157,12 +250,12 @@ Update procedure:
 
 ### Security Controls in NLS.Core
 
-v2 adds four security functions to `NLS.Core.psm1`:
+v2 adds four security functions:
 
 - `Test-NLSInputUPN` — validates UPN format before passing to connection cmdlets
 - `Test-NLSModuleIntegrity` — verifies all NLS modules loaded from expected path, aborts on violation
 - `Protect-NLSOutputPath` — locks output directory permissions to current user
-- `Protect-NLSExceptionsRedaction` — applies full redaction to exceptions log when `-RedactSensitiveData` is passed (bug fix from v1)
+- `Protect-NLSExceptionsRedaction` — applies full redaction to exceptions log when `-RedactSensitiveData` is passed
 
 ---
 
@@ -170,7 +263,7 @@ v2 adds four security functions to `NLS.Core.psm1`:
 
 ### PowerShell Version
 
-PowerShell 7+ is required. `#Requires -Version 7.0` is enforced. Windows PowerShell 5.1 is not supported.
+PowerShell 7+ is required. Windows PowerShell 5.1 is not supported.
 
 ```powershell
 winget install Microsoft.PowerShell
@@ -190,7 +283,7 @@ Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
 | Exchange Admin or Global Admin | Exchange Online collection |
 | `Policy.Read.ConditionalAccess` | CA policy collection |
 | `Directory.Read.All` | Graph directory access, admin roles, guest inventory, service principals |
-| `AuditLog.Read.All` | Sign-in log telemetry (Full mode), stale accounts |
+| `AuditLog.Read.All` | Sign-in log telemetry, stale accounts |
 | `Reports.Read.All` | User MFA registration status (`-MFAReport`) |
 | `SecurityEvents.Read.All` | Secure Score (`-SecureScore`) |
 
@@ -211,79 +304,6 @@ Unblock-File -Path .\Invoke-NLSAssessment.ps1
 Unblock-File -Path .\Modules\*.psm1
 ```
 
-Repeat if new module files are added after an update.
-
----
-
-## Usage
-
-### Get Help
-
-```powershell
-.\Invoke-NLSAssessment.ps1 --help
-```
-
-Displays branded help output with all flags, examples, permissions, and troubleshooting.
-
-### Exchange Only — Quick Triage
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NoGraph -NIST
-```
-
-### Full Assessment — All Frameworks
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed
-```
-
-### HIPAA Engagement — Dual State Gap Analysis
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -RedactSensitiveData
-```
-
-### Healthcare Client — Use HIPAA Profile
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData
-```
-### Full Assessment — Use Profile
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData
-```
-### MSP Tenant Assessment — Use Profile
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
-```
-### Redacted Output
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -RedactSensitiveData
-```
-
-Scrubs UPNs, GUIDs, IP addresses, and tenant-specific URLs from all output including the exceptions log.
-
-### Auto-Open Report
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -OpenReport
-```
-
-Opens `AssessmentSummary.md` on completion in the system default `.md` handler.
-
-### Navigate to Tool Directory
-
-```powershell
-# Option 1 -- PowerShell shorthand
-cd ~\Downloads\nextlayersec-assessment-main\nextlayersec-assessment-main
-
-# Option 2 -- Right-click the folder in File Explorer
-# Select "Open in Terminal" -- opens PowerShell 7 directly in the correct directory
-```
-
 ---
 
 ## Output
@@ -295,14 +315,12 @@ All artifacts written to `output\<timestamp>\` relative to the script directory.
 | `AssessmentSummary.md` | Full findings report with all v2 sections |
 | `Exceptions.md` | Non-fatal collection errors — fully redacted when `-RedactSensitiveData` is passed |
 
-### Report Sections
+### Report Sections (in order)
 
-The v2 report includes the following sections in order:
-
-1. **Assessment Metadata** — execution time, operator, mode, frameworks active, features active, module versions
+1. **Assessment Metadata** — execution time, operator, profile used, frameworks active, features active
 2. **Microsoft Secure Score** — current score, top improvement opportunities (if `-SecureScore`)
-3. **User MFA Status** — per-user MFA registration table with admin flagging (if `-MFAReport`)
-4. **Executive Summary** — Gap/Partial/Satisfied counts with gap alert
+3. **User MFA Status** — per-user MFA registration with admin flagging (if `-MFAReport`)
+4. **Executive Summary** — Gap/Partial/Satisfied counts
 5. **Collection Coverage** — status per control family with licensing gap notice
 6. **Admin Role Inventory** — role table with over-privilege detection (if `-AdminRoles`)
 7. **Stale Account Analysis** — inactive accounts with last sign-in (if `-StaleAccounts`)
@@ -363,19 +381,18 @@ The v2 report includes the following sections in order:
 | NotCollected | Operator did not pass the required flag |
 | Unsupported | Tenant licensing does not support this control |
 
-**Licensing gap notice:** When controls return Partial due to missing licenses (e.g. Defender for Office 365 cmdlets not found), the report includes a licensing note explaining the gap. This is a licensing issue, not a security finding. The exceptions log documents the full error detail.
+**Licensing gap notice:** When controls return Partial due to missing licenses (e.g. Defender for Office 365 cmdlets not found), the report includes a licensing note. This is a licensing issue, not a security finding.
 
 ---
 
 ## Operational Notes
 
-- Always run from a dedicated admin account — not your primary user account
+- Always run from a dedicated admin account
 - Use `-RedactSensitiveData` for any artifacts leaving your workstation
 - The `output\` directory is gitignored — do not commit assessment artifacts
-- Run from PowerShell 7 — Windows PowerShell 5.1 is not supported in v2
+- Run from PowerShell 7 — Windows PowerShell 5.1 is not supported
 - First Graph run against a new tenant prompts for browser consent
-- `-MFAReport` and `-SecureScore` require additional Graph scopes and will prompt for expanded consent
-- Extended inventory flags (`-AdminRoles`, `-StaleAccounts`, `-GuestInventory`, `-ServicePrincipals`) add significant collection time on large tenants
+- Extended inventory flags add significant collection time on large tenants
 
 ---
 
@@ -415,7 +432,7 @@ Symptom: `Could not load file or assembly 'Microsoft.Graph.Authentication'`
 Install-Module Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
 ```
 
-Close PowerShell completely and reopen in a fresh PowerShell 7 session.
+Close PowerShell and reopen in a fresh PowerShell 7 session.
 
 ### Conditional Access returns Partial
 
@@ -423,10 +440,6 @@ Symptom: `ConditionalAccess | Partial | One or more errors occurred`
 
 ```powershell
 Get-Command Get-MgIdentityConditionalAccessPolicy -ErrorAction SilentlyContinue
-```
-
-If missing or old version:
-```powershell
 Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
 ```
 
@@ -434,7 +447,7 @@ Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
 
 Symptom: `ConditionalAccess | Partial | [AccessDenied] : required scopes are missing in the token`
 
-Cause: Stale cached Graph token from a previous session that did not include `Policy.Read.ConditionalAccess`. Global Admin does not override a cached token with missing scopes.
+Cause: Stale cached Graph token missing `Policy.Read.ConditionalAccess`. Global Admin does not override a cached token.
 
 Fix:
 ```powershell
@@ -442,33 +455,31 @@ Disconnect-MgGraph -ErrorAction SilentlyContinue
 Remove-Item -Path "$env:USERPROFILE\.mg" -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
-Then run again. The browser will open for fresh consent. Accept all requested permissions on the consent screen.
+Rerun — browser will prompt for fresh consent. Accept all permissions.
 
 ### Defender for Office 365 Cmdlets Not Found
 
 Symptom: `DefenderO365 | Partial | The term 'Get-SafeAttachmentPolicy' is not recognized`
 
-Cause: The tenant does not have Defender for Office 365 Plan 1 or Plan 2. Required licenses:
+Cause: Tenant does not have Defender for Office 365 Plan 1 or Plan 2. Required licenses:
 - Microsoft 365 Business Premium
 - Microsoft Defender for Office 365 Plan 1 or Plan 2
 - Microsoft 365 E3/E5
 
-This is a licensing gap, not a security finding. All other controls still assess and score correctly. The exceptions log documents the full error.
+This is a licensing gap, not a security finding. All other controls still assess correctly.
 
 ### MFA Report returns Partial
 
-Symptom: `UserMFAStatus | Partial | Requires Reports.Read.All scope`
-
-The `-MFAReport` flag requires `Reports.Read.All`. Disconnect and reconnect to force scope re-consent:
+Requires `Reports.Read.All`. Disconnect and reconnect:
 
 ```powershell
 Disconnect-MgGraph
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -MFAReport
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -MFAReport
 ```
 
 ### Secure Score returns Partial
 
-The `-SecureScore` flag requires `SecurityEvents.Read.All`. Disconnect and reconnect to force re-consent.
+Requires `SecurityEvents.Read.All`. Disconnect and reconnect to force re-consent.
 
 ### Device compliance blocking Graph consent
 
@@ -481,13 +492,13 @@ Options:
 
 ### Operator shows as Unknown
 
-Graph was not connected when metadata was collected. Run with Graph enabled.
+Graph was not connected when metadata was collected. Run with Graph enabled or use a profile that includes Graph.
 
 ### Module integrity violation
 
 Symptom: `MODULE INTEGRITY VIOLATION DETECTED`
 
-A module loaded from an unexpected path. Verify the `Modules/` directory contents have not been modified. Re-download from the repo if in doubt.
+A module loaded from an unexpected path. Verify the `Modules/` directory and re-download from the repo.
 
 ---
 
@@ -495,7 +506,7 @@ A module loaded from an unexpected path. Verify the `Modules/` directory content
 
 | Version | Date | Notes |
 |---|---|---|
-| 2.0.0 | 2026-04-24 | Full v2 build — all features, security hardening, extended inventory |
+| 2.0.0 | 2026-04-24 | Full v2 build — profiles, all features, security hardening, extended inventory |
 | 1.0.0 | 2026-04-24 | Initial release — public repo nextlayersec-assessment |
 
 ---
@@ -522,59 +533,3 @@ CC BY-ND 4.0 -- See [LICENSE](LICENSE) for details.
 *Cybersecurity consulting for organizations that take security seriously.*
 
 </div>
-
----
-
-## Profiles
-
-Profiles are predefined bundles of framework and feature flags. Use a profile instead of typing long flag lists. Profiles are additive — pass additional flags alongside a profile to expand it.
-
-| Profile | Syntax | Frameworks | Features Included |
-|---|---|---|---|
-| Quick | `-P Quick` | NIST | Exchange only, no Graph — fastest triage |
-| Standard | `-P Standard` | NIST, CIS | Full Graph — general purpose assessment |
-| HIPAA | `-P HIPAA` | HIPAA, HIPAAProposed | MFAReport, AdminRoles, DMARC, SharedMailboxes |
-| MSP | `-P MSP` | NIST, CIS | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes |
-| ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts |
-| Full | `-P Full` | All frameworks | All features |
-
-Profiles are additive — pass extra flags alongside `-P` to expand the profile.
-
-### Profile Examples
-
-```powershell
-# Quick triage -- Exchange only, no Graph
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick
-
-# MSP tenant assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
-
-# Healthcare client -- HIPAA dual-state, redacted
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData
-
-# Zero Trust posture assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P ZeroTrust
-
-# Full assessment -- everything, redacted
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData
-
-# Profile expanded with extra flag
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore
-
-# Profile expanded with multiple extra flags
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -ZeroTrust -SecureScore -RedactSensitiveData
-```
-
-The active profile name appears in the report metadata so you always know what produced the output.
-
-### Why Profiles
-
-Before:
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport -AdminRoles -StaleAccounts -GuestInventory -NamedLocations -ServicePrincipals -DMARC -SharedMailboxes
-```
-
-After:
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full
-```
