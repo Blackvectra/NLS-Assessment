@@ -1,11 +1,10 @@
 #
 # NLS.Reporting.psm1
 # NextLayerSec Assessment Framework -- Reporting Module
-# v2.0.0 -- Granular object lists, current state vs recommended,
-#           CA policy inventory, user MFA gap, Secure Score section
+# v2.2.0 -- BLUF report structure: Summary > Gaps > Telemetry > Appendix
 #
 # Author:  NextLayerSec
-# Version: 2.0.0
+# Version: 2.2.0
 # License: CC BY-ND 4.0 -- https://creativecommons.org/licenses/by-nd/4.0/
 #
 
@@ -16,25 +15,395 @@ function Publish-NLSAssessmentSummary {
         [Parameter(Mandatory = $true)][hashtable]$Coverage,
         [Parameter(Mandatory = $true)][string]$OutputPath,
         [hashtable]$ExtendedData = @{},
-        [hashtable]$DeltaData = @{},
-        [bool]$Redact = $false
+        [hashtable]$DeltaData    = @{},
+        [bool]$Redact            = $false
     )
 
     $findings = $ScoredResults.Findings
     $summary  = $ScoredResults.Summary
     $sb       = [System.Text.StringBuilder]::new()
 
-    # ── Header ───────────────────────────────────────────────
+    $gaps     = @($findings | Where-Object { $_.State -eq 'Gap' }     | Sort-Object Category)
+    $partials = @($findings | Where-Object { $_.State -eq 'Partial' } | Sort-Object Category)
+    $passes   = @($findings | Where-Object { $_.State -eq 'Satisfied' } | Sort-Object Category)
+
+    # ── HEADER ───────────────────────────────────────────────
     [void]$sb.AppendLine('# NextLayerSec M365 Security Assessment')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('> Read-only assessment. No tenant configuration changes were made.')
-    [void]$sb.AppendLine('> Missing telemetry is NOT equivalent to missing policy.')
+    [void]$sb.AppendLine("> Read-only assessment. No tenant configuration changes were made.")
+    [void]$sb.AppendLine('')
+
+    # Compact metadata line
+    [void]$sb.AppendLine("**Execution Time:** $($Metadata.ExecutionTimeUTC) | **Operator:** $($Metadata.AuthContext) | **Profile:** $($Metadata.ExecutionMode)")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("**Frameworks:** $($Metadata.ActiveFrameworks) | **Features:** $($Metadata.ActiveFeatures)")
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine('')
 
-    # ── Metadata ─────────────────────────────────────────────
-    [void]$sb.AppendLine('## Assessment Metadata')
+    # ── SECTION 1: EXECUTIVE SUMMARY ─────────────────────────
+    [void]$sb.AppendLine('## 1. Executive Summary')
+    [void]$sb.AppendLine('')
+
+    $secureScore = $ExtendedData['SecureScore']
+    [void]$sb.AppendLine('| Metric | Value |')
+    [void]$sb.AppendLine('|---|---|')
+    if ($secureScore) {
+        [void]$sb.AppendLine("| Microsoft Secure Score | $($secureScore.ScorePercentage)% ($($secureScore.CurrentScore) / $($secureScore.MaxScore)) |")
+    }
+    [void]$sb.AppendLine("| Checks Passed | $($summary.Satisfied) |")
+    [void]$sb.AppendLine("| Active Gaps | $($summary.Gap) |")
+    if ($summary.Partial -gt 0) {
+        [void]$sb.AppendLine("| Partial Controls | $($summary.Partial) |")
+    }
+    [void]$sb.AppendLine("| Total Checks | $($summary.Total) |")
+    [void]$sb.AppendLine('')
+
+    # BLUF statement
+    if ($summary.Gap -eq 0 -and $summary.Partial -eq 0) {
+        [void]$sb.AppendLine('> **Bottom Line:** All controls satisfied. No immediate action required. Review telemetry section for hygiene observations.')
+    } elseif ($summary.Gap -eq 0) {
+        [void]$sb.AppendLine("> **Bottom Line:** No critical gaps. $($summary.Partial) partial control(s) require attention.")
+    } else {
+        $topGap = if ($gaps.Count -gt 0) { $gaps[0].Title } else { '' }
+        [void]$sb.AppendLine("> **Bottom Line:** $($summary.Gap) gap(s) identified requiring immediate remediation. Priority: $topGap.")
+    }
+    [void]$sb.AppendLine('')
+
+    # Delta summary if available
+    if ($DeltaData -and $DeltaData.Available) {
+        [void]$sb.AppendLine("**Delta vs previous run:** Improved $($DeltaData.ImprovedCount) | Regressed $($DeltaData.RegressedCount) | New $($DeltaData.NewCount)")
+        [void]$sb.AppendLine('')
+        if ($DeltaData.RegressedCount -gt 0) {
+            [void]$sb.AppendLine('> **Regression detected.** Controls that previously passed have failed. See delta detail in Appendix.')
+            [void]$sb.AppendLine('')
+        }
+    }
+
+    [void]$sb.AppendLine('---')
+    [void]$sb.AppendLine('')
+
+    # ── SECTION 2: ACTION PLAN (GAPS ONLY) ───────────────────
+    [void]$sb.AppendLine('## 2. Action Plan')
+    [void]$sb.AppendLine('')
+
+    if ($gaps.Count -eq 0 -and $partials.Count -eq 0) {
+        [void]$sb.AppendLine('No gaps or partial controls identified. All checks satisfied.')
+        [void]$sb.AppendLine('')
+    } else {
+        if ($gaps.Count -gt 0) {
+            [void]$sb.AppendLine('### High Priority Gaps')
+            [void]$sb.AppendLine('')
+            foreach ($finding in $gaps) {
+                [void]$sb.AppendLine("#### $($finding.Title)")
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine($finding.Detail)
+                [void]$sb.AppendLine('')
+
+                if ($finding.AffectedObjects -and $finding.AffectedObjects.Count -gt 0) {
+                    foreach ($obj in $finding.AffectedObjects) {
+                        [void]$sb.AppendLine("  - $obj")
+                    }
+                    [void]$sb.AppendLine('')
+                }
+
+                if ($finding.CurrentState -or $finding.Recommended) {
+                    [void]$sb.AppendLine("| | Value |")
+                    [void]$sb.AppendLine('|---|---|')
+                    if ($finding.CurrentState) { [void]$sb.AppendLine("| **Current State** | $($finding.CurrentState) |") }
+                    if ($finding.Recommended)  { [void]$sb.AppendLine("| **Recommended** | $($finding.Recommended) |") }
+                    [void]$sb.AppendLine('')
+                }
+
+                # Framework citations compact
+                $fwCitations = @()
+                if ($finding.NIST_SP800_53_r5) { $fwCitations += "NIST: $($finding.NIST_SP800_53_r5)" }
+                if ($finding.CIS_v8_1)         { $fwCitations += "CIS: $($finding.CIS_v8_1)" }
+                if ($finding.HIPAA_Current)    { $fwCitations += "HIPAA: $($finding.HIPAA_Current)" }
+                if ($fwCitations.Count -gt 0) {
+                    [void]$sb.AppendLine("> *$($fwCitations -join ' | ')*")
+                    [void]$sb.AppendLine('')
+                }
+
+                if ($finding.Remediation) {
+                    [void]$sb.AppendLine("**Remediation:** $($finding.Remediation)")
+                    [void]$sb.AppendLine('')
+                }
+            }
+        }
+
+        if ($partials.Count -gt 0) {
+            [void]$sb.AppendLine('### Medium Priority — Partial Controls')
+            [void]$sb.AppendLine('')
+            foreach ($finding in $partials) {
+                [void]$sb.AppendLine("#### $($finding.Title)")
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine($finding.Detail)
+                [void]$sb.AppendLine('')
+                if ($finding.Remediation) {
+                    [void]$sb.AppendLine("**Remediation:** $($finding.Remediation)")
+                    [void]$sb.AppendLine('')
+                }
+            }
+        }
+    }
+
+    [void]$sb.AppendLine('---')
+    [void]$sb.AppendLine('')
+
+    # ── SECTION 3: POSTURE & TELEMETRY ───────────────────────
+    [void]$sb.AppendLine('## 3. Posture & Telemetry')
+    [void]$sb.AppendLine('')
+
+    # Identity & Privilege summary
+    [void]$sb.AppendLine('### Identity & Privilege')
+    [void]$sb.AppendLine('')
+
+    $adminData = $ExtendedData['AdminRoleInventory']
+    $mfaData   = $ExtendedData['UserMFAStatus']
+    $staleData = $ExtendedData['StaleAccounts']
+    $guestData = $ExtendedData['GuestAccountInventory']
+    $bgData    = $ExtendedData['BreakGlassAccounts']
+    $pimData   = $ExtendedData['PIM']
+
+    if ($adminData) {
+        $gaFlag = if ($adminData.GlobalAdminExcessive) { ' ⚠ Exceeds recommended maximum of 2' } else { '' }
+        [void]$sb.AppendLine("- **Global Admins:** $($adminData.GlobalAdminCount)$gaFlag")
+    }
+    if ($mfaData) {
+        [void]$sb.AppendLine("- **MFA Registration:** $($mfaData.MFARegistered) of $($mfaData.TotalUsers) users registered")
+        if ($mfaData.NoMFAList -and $mfaData.NoMFAList.Count -gt 0) {
+            foreach ($u in $mfaData.NoMFAList) {
+                $adminFlag = if ($u.IsAdmin) { ' *(Admin)*' } else { '' }
+                [void]$sb.AppendLine("  - $($u.UPN)$adminFlag — no MFA registered")
+            }
+        }
+    }
+    if ($staleData -and $staleData.StaleCount -gt 0) {
+        [void]$sb.AppendLine("- **Stale Accounts ($($staleData.ThresholdDays)+ days inactive):** $($staleData.StaleCount)")
+        foreach ($acct in $staleData.StaleList) {
+            [void]$sb.AppendLine("  - $($acct.UPN) — last sign-in $($acct.LastSignIn)")
+        }
+    }
+    if ($guestData) {
+        [void]$sb.AppendLine("- **Guest Accounts:** $($guestData.TotalGuests) total ($($guestData.StaleGuests) stale)")
+    }
+    if ($bgData) {
+        $bgStatus = if ($bgData.Configured) { 'Configured and excluded from CA' } elseif ($bgData.Count -gt 0) { 'Exists but not properly excluded from CA' } else { 'Not detected' }
+        [void]$sb.AppendLine("- **Break-Glass Account:** $bgStatus")
+    }
+    if ($pimData -and $pimData.PermanentGlobalAdminCount -gt 0) {
+        [void]$sb.AppendLine("- **Permanent Global Admins (no PIM):** $($pimData.PermanentGlobalAdminCount) — review for PIM eligibility")
+    }
+    [void]$sb.AppendLine('')
+
+    # Admin Role Table
+    if ($adminData -and $adminData.Roles) {
+        [void]$sb.AppendLine('### Admin Role Inventory')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Role | Members | High Privilege |')
+        [void]$sb.AppendLine('|---|:---:|:---:|')
+        foreach ($role in ($adminData.Roles | Where-Object { $_.MemberCount -gt 0 })) {
+            $hp = if ($role.IsHighPriv) { 'Yes' } else { 'No' }
+            [void]$sb.AppendLine("| $($role.RoleName) | $($role.MemberCount) | $hp |")
+        }
+        [void]$sb.AppendLine('')
+    }
+
+    # Named Locations
+    $namedLocData = $ExtendedData['NamedLocations']
+    if ($namedLocData -and $namedLocData.TotalDefined -gt 0) {
+        [void]$sb.AppendLine('### Named Locations')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Location | Type | Trusted |')
+        [void]$sb.AppendLine('|---|---|:---:|')
+        foreach ($loc in $namedLocData.Locations) {
+            $trusted = if ($loc.IsTrusted) { 'Yes' } else { 'No' }
+            [void]$sb.AppendLine("| $($loc.DisplayName) | $($loc.Type) | $trusted |")
+        }
+        [void]$sb.AppendLine('')
+    } elseif ($namedLocData -and $namedLocData.TotalDefined -eq 0) {
+        [void]$sb.AppendLine('### Named Locations')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('> No named locations defined. Required for Zero Trust network trust segmentation.')
+        [void]$sb.AppendLine('')
+    }
+
+    # Service Principals
+    $spData = $ExtendedData['ServicePrincipalInventory']
+    if ($spData -and $spData.HighPrivilegeCount -gt 0) {
+        [void]$sb.AppendLine('### High Privilege Service Principals')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Display Name | Publisher | App ID |')
+        [void]$sb.AppendLine('|---|---|---|')
+        foreach ($sp in $spData.HighPrivilegeList) {
+            [void]$sb.AppendLine("| $($sp.DisplayName) | $($sp.Publisher) | $($sp.AppId) |")
+        }
+        [void]$sb.AppendLine('')
+    }
+
+    # Secure Score top gaps
+    if ($secureScore -and $secureScore.TopGaps -and $secureScore.TopGaps.Count -gt 0) {
+        [void]$sb.AppendLine('### Secure Score — Top Improvement Opportunities')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Control | Max Points | Status |')
+        [void]$sb.AppendLine('|---|:---:|---|')
+        foreach ($gap in $secureScore.TopGaps) {
+            [void]$sb.AppendLine("| $($gap.Title) | $($gap.MaxScore) | $($gap.ImplementationStatus) |")
+        }
+        [void]$sb.AppendLine('')
+    }
+
+    # CA Policy Inventory
+    $caData = $ExtendedData['ConditionalAccess']
+    if ($caData -and $caData.Policies -and $caData.Policies.Count -gt 0) {
+        [void]$sb.AppendLine('### Conditional Access Policy Inventory')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Policy Name | State | MFA | Legacy Block | Device |')
+        [void]$sb.AppendLine('|---|:---:|:---:|:---:|:---:|')
+        foreach ($policy in $caData.Policies) {
+            $mfa    = if ($policy.HasMfaGrant) { 'Yes' } else { 'No' }
+            $legacy = if ($policy.TargetsLegacyAuth) { 'Yes' } else { 'No' }
+            $device = if ($policy.RequiresCompliantDevice) { 'Yes' } else { 'No' }
+            [void]$sb.AppendLine("| $($policy.DisplayName) | $($policy.State) | $mfa | $legacy | $device |")
+        }
+        [void]$sb.AppendLine('')
+
+        if ($caData.MissingPolicies -and $caData.MissingPolicies.Count -gt 0) {
+            [void]$sb.AppendLine('**Recommended policies not detected:**')
+            [void]$sb.AppendLine('')
+            foreach ($missing in $caData.MissingPolicies) {
+                [void]$sb.AppendLine("- [ ] $missing")
+            }
+            [void]$sb.AppendLine('')
+        }
+    }
+
+    # DMARC status
+    $dmarcData = $ExtendedData['DMARC']
+    if ($dmarcData) {
+        [void]$sb.AppendLine('### DMARC Status')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Domain | Policy | Pct | Enforced |')
+        [void]$sb.AppendLine('|---|:---:|:---:|:---:|')
+        foreach ($domain in $dmarcData.Domains) {
+            $enforced = if ($domain.Enforced) { 'Yes' } elseif ($domain.Partial) { 'Quarantine' } else { 'No' }
+            [void]$sb.AppendLine("| $($domain.Domain) | $($domain.Policy) | $($domain.Pct)% | $enforced |")
+        }
+        [void]$sb.AppendLine('')
+    }
+
+    # DNS Email Records
+    $dnsData = $ExtendedData['DNSEmailRecords']
+    if ($dnsData) {
+        [void]$sb.AppendLine('### DNS Email Record Verification')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('> Live DNS lookup. Records shown are currently published.')
+        [void]$sb.AppendLine('')
+        foreach ($domain in $dnsData.Domains) {
+            [void]$sb.AppendLine("**$($domain.Domain)**")
+            [void]$sb.AppendLine('')
+            $spfStatus = if ($domain.SPF.Found) { "``$($domain.SPF.Record)``" } else { 'Not found' }
+            $dmarcStatus = if ($domain.DMARC.Found) { "``$($domain.DMARC.Record)``" } else { 'Not found' }
+            $dkimStatus = if ($domain.DKIM.BothFound) { 'Both selectors found' } else { 'One or more selectors missing' }
+            [void]$sb.AppendLine("- **SPF:** $spfStatus")
+            [void]$sb.AppendLine("- **DMARC:** $dmarcStatus")
+            [void]$sb.AppendLine("- **DKIM:** $dkimStatus (EXO enabled: $($domain.DKIM.EnabledInEXO))")
+            [void]$sb.AppendLine('')
+        }
+    }
+
+    [void]$sb.AppendLine('---')
+    [void]$sb.AppendLine('')
+
+    # ── SECTION 4: APPENDIX ──────────────────────────────────
+    [void]$sb.AppendLine('## 4. Appendix')
+    [void]$sb.AppendLine('')
+
+    # Delta detail
+    if ($DeltaData -and $DeltaData.Available) {
+        [void]$sb.AppendLine('### Delta Report')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine("> Comparison against: $(Split-Path $DeltaData.PreviousReport -Leaf)")
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Category | Count |')
+        [void]$sb.AppendLine('|---|:---:|')
+        [void]$sb.AppendLine("| Improved | $($DeltaData.ImprovedCount) |")
+        [void]$sb.AppendLine("| Regressed | $($DeltaData.RegressedCount) |")
+        [void]$sb.AppendLine("| Unchanged | $($DeltaData.UnchangedCount) |")
+        [void]$sb.AppendLine("| New Findings | $($DeltaData.NewCount) |")
+        [void]$sb.AppendLine('')
+
+        if ($DeltaData.ImprovedCount -gt 0) {
+            [void]$sb.AppendLine('**Improved**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('| Control | Previous | Current |')
+            [void]$sb.AppendLine('|---|:---:|:---:|')
+            foreach ($item in $DeltaData.Improved) {
+                [void]$sb.AppendLine("| $($item.Title) | $($item.PreviousState) | $($item.CurrentState) |")
+            }
+            [void]$sb.AppendLine('')
+        }
+        if ($DeltaData.RegressedCount -gt 0) {
+            [void]$sb.AppendLine('**Regressed**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('| Control | Previous | Current |')
+            [void]$sb.AppendLine('|---|:---:|:---:|')
+            foreach ($item in $DeltaData.Regressed) {
+                [void]$sb.AppendLine("| $($item.Title) | $($item.PreviousState) | $($item.CurrentState) |")
+            }
+            [void]$sb.AppendLine('')
+        }
+    }
+
+    # Satisfied controls
+    if ($passes.Count -gt 0) {
+        [void]$sb.AppendLine('### Satisfied Controls')
+        [void]$sb.AppendLine('')
+        $passByCategory = $passes | Group-Object -Property Category
+        foreach ($category in $passByCategory) {
+            [void]$sb.AppendLine("**$($category.Name)**")
+            [void]$sb.AppendLine('')
+            foreach ($finding in $category.Group) {
+                [void]$sb.AppendLine("- ✓ $($finding.Title)")
+                if ($finding.Detail) { [void]$sb.AppendLine("  $($finding.Detail)") }
+                # Framework citations
+                $fwCitations = @()
+                if ($finding.NIST_SP800_53_r5) { $fwCitations += "NIST: $($finding.NIST_SP800_53_r5)" }
+                if ($finding.CIS_v8_1)         { $fwCitations += "CIS: $($finding.CIS_v8_1)" }
+                if ($finding.HIPAA_Current)    { $fwCitations += "HIPAA: $($finding.HIPAA_Current)" }
+                if ($fwCitations.Count -gt 0) {
+                    [void]$sb.AppendLine("  *$($fwCitations -join ' | ')*")
+                }
+                [void]$sb.AppendLine('')
+            }
+        }
+    }
+
+    # Collection coverage
+    [void]$sb.AppendLine('### Collection Coverage')
+    [void]$sb.AppendLine('')
+
+    # Check for licensing gaps
+    $licensingGaps = $Coverage.GetEnumerator() | Where-Object {
+        $_.Value.Status -eq 'Partial' -and $_.Value.Reason -match 'not recognized|cmdlet|licensing'
+    }
+    if ($licensingGaps) {
+        [void]$sb.AppendLine('> **Licensing Note:** One or more control families could not be assessed due to tenant licensing. See exceptions log for detail.')
+        [void]$sb.AppendLine('')
+    }
+
+    [void]$sb.AppendLine('| Control Family | Status | Notes |')
+    [void]$sb.AppendLine('|---|:---:|---|')
+    foreach ($key in ($Coverage.Keys | Sort-Object)) {
+        $entry  = $Coverage[$key]
+        $reason = if ($entry.Reason) { $entry.Reason } else { '' }
+        [void]$sb.AppendLine("| $key | $($entry.Status) | $reason |")
+    }
+    [void]$sb.AppendLine('')
+
+    # Assessment metadata detail
+    [void]$sb.AppendLine('### Assessment Metadata')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('| Field | Value |')
     [void]$sb.AppendLine('|---|---|')
@@ -48,433 +417,13 @@ function Publish-NLSAssessmentSummary {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine('')
-
-    # ── Delta Report ─────────────────────────────────────────
-    if ($DeltaData -and $DeltaData.Available) {
-        Publish-NLSDeltaSection -Delta $DeltaData -StringBuilder $sb
-    }
-
-    # ── Secure Score ─────────────────────────────────────────
-    $secureScore = $ExtendedData['SecureScore']
-    if ($secureScore) {
-        [void]$sb.AppendLine('## Microsoft Secure Score')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine("| Metric | Value |")
-        [void]$sb.AppendLine('|---|---|')
-        [void]$sb.AppendLine("| Current Score | $($secureScore.CurrentScore) / $($secureScore.MaxScore) |")
-        [void]$sb.AppendLine("| Score Percentage | $($secureScore.ScorePercentage)% |")
-        [void]$sb.AppendLine("| Controls Not Implemented | $($secureScore.NotImplemented) |")
-        [void]$sb.AppendLine("| Controls Partially Implemented | $($secureScore.PartiallyImpl) |")
-        [void]$sb.AppendLine("| Controls Fully Implemented | $($secureScore.FullyImplemented) |")
-        [void]$sb.AppendLine('')
-
-        if ($secureScore.TopGaps -and $secureScore.TopGaps.Count -gt 0) {
-            [void]$sb.AppendLine('### Top Score Improvement Opportunities')
-            [void]$sb.AppendLine('')
-            [void]$sb.AppendLine('| Control | Max Points | Status |')
-            [void]$sb.AppendLine('|---|:---:|---|')
-            foreach ($gap in $secureScore.TopGaps) {
-                [void]$sb.AppendLine("| $($gap.Title) | $($gap.MaxScore) | $($gap.ImplementationStatus) |")
-            }
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── User MFA Status ──────────────────────────────────────
-    $mfaStatus = $ExtendedData['UserMFAStatus']
-    if ($mfaStatus) {
-        [void]$sb.AppendLine('## User MFA Status')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Metric | Count |')
-        [void]$sb.AppendLine('|---|:---:|')
-        [void]$sb.AppendLine("| Total Users | $($mfaStatus.TotalUsers) |")
-        [void]$sb.AppendLine("| MFA Not Registered | $($mfaStatus.NoMFARegistered) |")
-        [void]$sb.AppendLine("| MFA Registered | $($mfaStatus.MFARegistered) |")
-        [void]$sb.AppendLine("| Admins Without MFA | $($mfaStatus.AdminsWithoutMFA) |")
-        [void]$sb.AppendLine('')
-
-        if ($mfaStatus.NoMFAList -and $mfaStatus.NoMFAList.Count -gt 0) {
-            [void]$sb.AppendLine('### Users Without MFA Registered')
-            [void]$sb.AppendLine('')
-            [void]$sb.AppendLine('| User | Admin |')
-            [void]$sb.AppendLine('|---|:---:|')
-            foreach ($user in $mfaStatus.NoMFAList) {
-                $adminFlag = if ($user.IsAdmin) { 'Yes' } else { 'No' }
-                [void]$sb.AppendLine("| $($user.UPN) | $adminFlag |")
-            }
-            [void]$sb.AppendLine('')
-            [void]$sb.AppendLine('> *MFA registration does not equal enforcement. CA policy enforcement is checked in findings below.*')
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── Executive Summary ────────────────────────────────────
-    [void]$sb.AppendLine('## Executive Summary')
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('| State | Count |')
-    [void]$sb.AppendLine('|---|:---:|')
-    [void]$sb.AppendLine("| Gap | $($summary.Gap) |")
-    [void]$sb.AppendLine("| Partial | $($summary.Partial) |")
-    [void]$sb.AppendLine("| Satisfied | $($summary.Satisfied) |")
-    [void]$sb.AppendLine("| **Total Checks** | **$($summary.Total)** |")
-    [void]$sb.AppendLine('')
-    if ($summary.Gap -gt 0) {
-        [void]$sb.AppendLine("> **$($summary.Gap) gap(s) identified. Review findings below for remediation steps.**")
-        [void]$sb.AppendLine('')
-    }
-    [void]$sb.AppendLine('---')
-    [void]$sb.AppendLine('')
-
-    # ── Coverage Map ─────────────────────────────────────────
-    [void]$sb.AppendLine('## Collection Coverage')
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('| Control Family | Status | Notes |')
-    [void]$sb.AppendLine('|---|:---:|---|')
-    foreach ($key in $Coverage.Keys) {
-        $entry      = $Coverage[$key]
-        $statusIcon = switch ($entry.Status) {
-            'Collected'    { 'Collected' }
-            'Partial'      { 'Partial' }
-            'NotCollected' { 'Not Collected' }
-            'Unsupported'  { 'Unsupported' }
-            default        { $entry.Status }
-        }
-        $reason = if ($entry.Reason) { $entry.Reason } else { '' }
-        [void]$sb.AppendLine("| $key | $statusIcon | $reason |")
-    }
-    [void]$sb.AppendLine('')
-
-    # ── Licensing Gaps ───────────────────────────────────────
-    $licensingGaps = $Coverage.GetEnumerator() | Where-Object {
-        $_.Value.Status -eq 'Partial' -and $_.Value.Reason -match 'not recognized|cmdlet|licensing'
-    }
-    if ($licensingGaps) {
-        [void]$sb.AppendLine('> **Licensing Note:** One or more control families could not be assessed due to tenant licensing.')
-        [void]$sb.AppendLine('> Controls marked Partial in the coverage map above require additional licensing to assess.')
-        [void]$sb.AppendLine('> This is a licensing gap, not a security finding. See exceptions log for detail.')
-        [void]$sb.AppendLine('')
-    }
-
-    [void]$sb.AppendLine('---')
-    [void]$sb.AppendLine('')
-
-    # ── Admin Role Inventory ─────────────────────────────────
-    $adminRoles = $ExtendedData['AdminRoleInventory']
-    if ($adminRoles) {
-        [void]$sb.AppendLine('## Admin Role Inventory')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Metric | Value |')
-        [void]$sb.AppendLine('|---|---|')
-        [void]$sb.AppendLine("| Global Admins | $($adminRoles.GlobalAdminCount) |")
-        [void]$sb.AppendLine("| High Privilege Role Assignments | $($adminRoles.HighPrivRoleCount) |")
-        $excessiveFlag = if ($adminRoles.GlobalAdminExcessive) { 'Yes -- review and reduce' } else { 'No' }
-        [void]$sb.AppendLine("| Global Admin Count Excessive (>2) | $excessiveFlag |")
-        [void]$sb.AppendLine('')
-        if ($adminRoles.Roles) {
-            [void]$sb.AppendLine('| Role | Members | High Privilege |')
-            [void]$sb.AppendLine('|---|:---:|:---:|')
-            foreach ($role in ($adminRoles.Roles | Where-Object { $_.MemberCount -gt 0 })) {
-                $highPrivFlag = if ($role.IsHighPriv) { 'Yes' } else { 'No' }
-                [void]$sb.AppendLine("| $($role.RoleName) | $($role.MemberCount) | $highPrivFlag |")
-            }
-            [void]$sb.AppendLine('')
-        }
-        if ($adminRoles.GlobalAdminExcessive) {
-            [void]$sb.AppendLine('> **More than 2 Global Admins detected. Review and reduce to minimum required. Apply least privilege.**')
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── Stale Accounts ───────────────────────────────────────
-    $staleData = $ExtendedData['StaleAccounts']
-    if ($staleData) {
-        [void]$sb.AppendLine('## Stale Account Analysis')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine("| Metric | Value |")
-        [void]$sb.AppendLine('|---|---|')
-        [void]$sb.AppendLine("| Threshold | $($staleData.ThresholdDays) days |")
-        [void]$sb.AppendLine("| Total Active Users | $($staleData.TotalActiveUsers) |")
-        [void]$sb.AppendLine("| Inactive $($staleData.ThresholdDays)+ Days | $($staleData.StaleCount) |")
-        [void]$sb.AppendLine("| Never Signed In | $($staleData.NeverSignedInCount) |")
-        [void]$sb.AppendLine('')
-        if ($staleData.StaleList -and $staleData.StaleList.Count -gt 0) {
-            [void]$sb.AppendLine('### Inactive Accounts')
-            [void]$sb.AppendLine('')
-            [void]$sb.AppendLine('| User | Last Sign-In |')
-            [void]$sb.AppendLine('|---|---|')
-            foreach ($acct in $staleData.StaleList) {
-                [void]$sb.AppendLine("| $($acct.UPN) | $($acct.LastSignIn) |")
-            }
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── Guest Account Inventory ──────────────────────────────
-    $guestData = $ExtendedData['GuestAccountInventory']
-    if ($guestData) {
-        [void]$sb.AppendLine('## Guest Account Inventory')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Metric | Count |')
-        [void]$sb.AppendLine('|---|:---:|')
-        [void]$sb.AppendLine("| Total Guest Accounts | $($guestData.TotalGuests) |")
-        [void]$sb.AppendLine("| Active Guests (signed in) | $($guestData.ActiveGuests) |")
-        [void]$sb.AppendLine("| Stale Guests (90+ days) | $($guestData.StaleGuests) |")
-        [void]$sb.AppendLine('')
-        if ($guestData.GuestList -and $guestData.GuestList.Count -gt 0) {
-            [void]$sb.AppendLine('| Guest UPN | Last Sign-In | State |')
-            [void]$sb.AppendLine('|---|---|---|')
-            foreach ($guest in $guestData.GuestList) {
-                [void]$sb.AppendLine("| $($guest.UPN) | $($guest.LastSignIn) | $($guest.State) |")
-            }
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── Named Locations ──────────────────────────────────────
-    $namedLocData = $ExtendedData['NamedLocations']
-    if ($namedLocData) {
-        [void]$sb.AppendLine('## Named Locations')
-        [void]$sb.AppendLine('')
-        if ($namedLocData.TotalDefined -eq 0) {
-            [void]$sb.AppendLine('> **No named locations defined.** Named locations are required for Zero Trust network trust segmentation.')
-            [void]$sb.AppendLine('> Without named locations, Conditional Access policies cannot differentiate corporate network from external access.')
-            [void]$sb.AppendLine('')
-        } else {
-            [void]$sb.AppendLine("| Location | Type | Trusted |")
-            [void]$sb.AppendLine('|---|---|:---:|')
-            foreach ($loc in $namedLocData.Locations) {
-                $trusted = if ($loc.IsTrusted) { 'Yes' } else { 'No' }
-                [void]$sb.AppendLine("| $($loc.DisplayName) | $($loc.Type) | $trusted |")
-            }
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── Service Principal Inventory ──────────────────────────
-    $spData = $ExtendedData['ServicePrincipalInventory']
-    if ($spData) {
-        [void]$sb.AppendLine('## Service Principal Inventory')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Metric | Count |')
-        [void]$sb.AppendLine('|---|:---:|')
-        [void]$sb.AppendLine("| Total Service Principals | $($spData.TotalServicePrincipals) |")
-        [void]$sb.AppendLine("| High Privilege Detected | $($spData.HighPrivilegeCount) |")
-        [void]$sb.AppendLine('')
-        if ($spData.HighPrivilegeList -and $spData.HighPrivilegeList.Count -gt 0) {
-            [void]$sb.AppendLine('### High Privilege Service Principals')
-            [void]$sb.AppendLine('')
-            [void]$sb.AppendLine('| Display Name | Publisher | App ID |')
-            [void]$sb.AppendLine('|---|---|---|')
-            foreach ($sp in $spData.HighPrivilegeList) {
-                [void]$sb.AppendLine("| $($sp.DisplayName) | $($sp.Publisher) | $($sp.AppId) |")
-            }
-            [void]$sb.AppendLine('')
-            [void]$sb.AppendLine('> **Review high-privilege service principals. Reduce permissions to minimum required.**')
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── DMARC Status ─────────────────────────────────────────
-    $dmarcData = $ExtendedData['DMARC']
-    if ($dmarcData) {
-        [void]$sb.AppendLine('## DMARC Policy Status')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Domain | Policy | Pct | Enforced |')
-        [void]$sb.AppendLine('|---|:---:|:---:|:---:|')
-        foreach ($domain in $dmarcData.Domains) {
-            $enforced = if ($domain.Enforced) { 'Yes' } elseif ($domain.Partial) { 'Quarantine' } else { 'No' }
-            [void]$sb.AppendLine("| $($domain.Domain) | $($domain.Policy) | $($domain.Pct)% | $enforced |")
-        }
-        [void]$sb.AppendLine('')
-        if ($dmarcData.MissingCount -gt 0) {
-            [void]$sb.AppendLine("> **$($dmarcData.MissingCount) domain(s) have no DMARC record. Deploy DMARC at p=quarantine then advance to p=reject.**")
-            [void]$sb.AppendLine('')
-        }
-        if ($dmarcData.NoneCount -gt 0) {
-            [void]$sb.AppendLine("> **$($dmarcData.NoneCount) domain(s) have DMARC at p=none (monitoring only). Advance to p=quarantine or p=reject.**")
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── Shared Mailbox Hardening ─────────────────────────────
-    $sharedData = $ExtendedData['SharedMailboxHardening']
-    if ($sharedData) {
-        [void]$sb.AppendLine('## Shared Mailbox Hardening')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Metric | Count |')
-        [void]$sb.AppendLine('|---|:---:|')
-        [void]$sb.AppendLine("| Total Shared Mailboxes | $($sharedData.TotalSharedMailboxes) |")
-        [void]$sb.AppendLine("| Interactive Sign-In Enabled | $($sharedData.SignInEnabledCount) |")
-        [void]$sb.AppendLine("| POP3 Enabled | $($sharedData.PopEnabledCount) |")
-        [void]$sb.AppendLine("| IMAP Enabled | $($sharedData.ImapEnabledCount) |")
-        [void]$sb.AppendLine('')
-        if ($sharedData.SignInEnabledList -and $sharedData.SignInEnabledList.Count -gt 0) {
-            [void]$sb.AppendLine('### Shared Mailboxes with Interactive Sign-In Enabled')
-            [void]$sb.AppendLine('')
-            foreach ($mbx in $sharedData.SignInEnabledList) {
-                [void]$sb.AppendLine("  - $mbx")
-            }
-            [void]$sb.AppendLine('')
-            [void]$sb.AppendLine('> **Shared mailboxes should have interactive sign-in disabled. Run Set-MsolUser -UserPrincipalName <mbx> -BlockCredential $true**')
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── CA Policy Inventory ──────────────────────────────────
-    $caData = $ExtendedData['ConditionalAccess']
-    if ($caData -and $caData.Policies -and $caData.Policies.Count -gt 0) {
-        [void]$sb.AppendLine('## Conditional Access Policy Inventory')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Policy Name | State | MFA Grant | Legacy Auth Block | Device Compliance |')
-        [void]$sb.AppendLine('|---|:---:|:---:|:---:|:---:|')
-        foreach ($policy in $caData.Policies) {
-            $state   = $policy.State
-            $mfa     = if ($policy.HasMfaGrant) { 'Yes' } else { 'No' }
-            $legacy  = if ($policy.TargetsLegacyAuth) { 'Yes' } else { 'No' }
-            $device  = if ($policy.RequiresCompliantDevice) { 'Yes' } else { 'No' }
-            [void]$sb.AppendLine("| $($policy.DisplayName) | $state | $mfa | $legacy | $device |")
-        }
-        [void]$sb.AppendLine('')
-
-        if ($caData.MissingPolicies -and $caData.MissingPolicies.Count -gt 0) {
-            [void]$sb.AppendLine('### Recommended Policies Not Found')
-            [void]$sb.AppendLine('')
-            foreach ($missing in $caData.MissingPolicies) {
-                [void]$sb.AppendLine("- [ ] $missing")
-            }
-            [void]$sb.AppendLine('')
-        }
-        [void]$sb.AppendLine('---')
-        [void]$sb.AppendLine('')
-    }
-
-    # ── Findings by Severity ─────────────────────────────────
-    [void]$sb.AppendLine('## Findings')
-    [void]$sb.AppendLine('')
-
-    $severityOrder = @('Gap', 'Partial', 'Satisfied')
-
-    foreach ($sev in $severityOrder) {
-        $sevFindings = $findings | Where-Object { $_.State -eq $sev }
-        if (-not $sevFindings) { continue }
-
-        $label = switch ($sev) { 'Gap' { 'High' } 'Partial' { 'Medium' } 'Satisfied' { 'Pass' } }
-        [void]$sb.AppendLine("### $label")
-        [void]$sb.AppendLine('')
-
-        $categories = $sevFindings | Group-Object -Property Category
-        foreach ($category in $categories) {
-            [void]$sb.AppendLine("#### $($category.Name)")
-            [void]$sb.AppendLine('')
-
-            foreach ($finding in $category.Group) {
-                [void]$sb.AppendLine("**$($finding.Title)**")
-                [void]$sb.AppendLine('')
-                [void]$sb.AppendLine($finding.Detail)
-
-                # v2 -- affected object list
-                if ($finding.AffectedObjects -and $finding.AffectedObjects.Count -gt 0) {
-                    [void]$sb.AppendLine('')
-                    foreach ($obj in $finding.AffectedObjects) {
-                        [void]$sb.AppendLine("  - $obj")
-                    }
-                }
-
-                # v2 -- current state vs recommended
-                if ($finding.CurrentState -and $finding.Recommended -and $sev -ne 'Satisfied') {
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine('| | Value |')
-                    [void]$sb.AppendLine('|---|---|')
-                    [void]$sb.AppendLine("| **Current State** | $($finding.CurrentState) |")
-                    [void]$sb.AppendLine("| **Recommended** | $($finding.Recommended) |")
-                }
-
-                # Per-framework recommendation blocks
-                if ($finding.NIST_SP800_53_r5) {
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine('**NIST SP 800-53 Rev 5**')
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine("- Controls: $($finding.NIST_SP800_53_r5)")
-                    if ($finding.NIST_Detail) {
-                        [void]$sb.AppendLine("- $($finding.NIST_Detail)")
-                    }
-                    if ($finding.NIST_Requirement) {
-                        [void]$sb.AppendLine("- Requirement level: $($finding.NIST_Requirement)")
-                    }
-                }
-
-                if ($finding.CIS_v8_1) {
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine('**CIS Controls v8.1**')
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine("- Safeguards: $($finding.CIS_v8_1)")
-                    if ($finding.CIS_Detail) {
-                        [void]$sb.AppendLine("- $($finding.CIS_Detail)")
-                    }
-                    if ($finding.CIS_Requirement) {
-                        [void]$sb.AppendLine("- Implementation Group: $($finding.CIS_Requirement)")
-                    }
-                }
-
-                if ($finding.HIPAA_Current) {
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine('**HIPAA Security Rule (Current Enforceable)**')
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine("- Citations: $($finding.HIPAA_Current)")
-                    if ($finding.HIPAA_Detail) {
-                        [void]$sb.AppendLine("- $($finding.HIPAA_Detail)")
-                    }
-                    if ($finding.HIPAA_Req) {
-                        [void]$sb.AppendLine("- Requirement: $($finding.HIPAA_Req)")
-                    }
-                }
-
-                if ($finding.HIPAA_Proposed) {
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine('**HIPAA Security Rule (NPRM Proposed — Expected Final May 2026)**')
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine("- Citations: $($finding.HIPAA_Proposed)")
-                    if ($finding.HIPAA_Proposed_Detail) {
-                        [void]$sb.AppendLine("- $($finding.HIPAA_Proposed_Detail)")
-                    }
-                    if ($finding.HIPAA_Proposed_Req) {
-                        [void]$sb.AppendLine("- Requirement: $($finding.HIPAA_Proposed_Req)")
-                    }
-                }
-
-                if ($finding.Remediation -and $sev -ne 'Satisfied') {
-                    [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine("*Remediation:* $($finding.Remediation)")
-                }
-                [void]$sb.AppendLine('')
-            }
-        }
-    }
-
-    [void]$sb.AppendLine('---')
-    [void]$sb.AppendLine('')
     [void]$sb.AppendLine('*Assessment performed by NextLayerSec -- nextlayersec.io*')
     [void]$sb.AppendLine('*Read-only instrument. Results reflect visible telemetry at time of assessment.*')
 
-    Export-NLSSafeMarkdown -Content $sb.ToString() -OutPath $OutputPath -Redact $Redact
+    # Write output
+    $reportContent = $sb.ToString()
+    if ($Redact) { $reportContent = Invoke-NLSRedaction -Content $reportContent }
+    $reportContent | Out-File -FilePath $OutputPath -Encoding utf8 -Force
     Write-Host "  [+] Assessment summary written to: $OutputPath" -ForegroundColor Green
 }
 
@@ -487,11 +436,8 @@ function Publish-NLSExceptionsList {
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine('# NextLayerSec Assessment -- Collection Exceptions')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('> Exceptions are non-fatal errors encountered during data collection.')
-    [void]$sb.AppendLine('> An exception does not mean a control failed -- it means the control could not be assessed.')
-    [void]$sb.AppendLine('> Review each exception to determine whether a permissions or licensing gap exists.')
-    [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('---')
+    [void]$sb.AppendLine('> Non-fatal errors encountered during data collection.')
+    [void]$sb.AppendLine('> An exception means the control could not be assessed, not that it failed.')
     [void]$sb.AppendLine('')
 
     if ($Exceptions.Count -eq 0) {
@@ -507,8 +453,6 @@ function Publish-NLSExceptionsList {
             [void]$sb.AppendLine("**Message:** $($ex.Message)")
             [void]$sb.AppendLine('')
             if ($ex.ErrorDetails) {
-                [void]$sb.AppendLine('**Error Details:**')
-                [void]$sb.AppendLine('')
                 [void]$sb.AppendLine('```')
                 [void]$sb.AppendLine($ex.ErrorDetails)
                 [void]$sb.AppendLine('```')
@@ -518,16 +462,11 @@ function Publish-NLSExceptionsList {
     }
 
     [void]$sb.AppendLine('---')
-    [void]$sb.AppendLine('')
     [void]$sb.AppendLine('*NextLayerSec -- nextlayersec.io*')
 
     $exceptionsContent = $sb.ToString()
-    # v2 security fix -- apply redaction to exceptions log when requested
-    # Exceptions were previously written without redaction even with -RedactSensitiveData
-    if ($Redact) {
-        $exceptionsContent = Protect-NLSExceptionsRedaction -Content $exceptionsContent
-    }
-    Export-NLSSafeMarkdown -Content $exceptionsContent -OutPath $OutputPath -Redact $false
+    if ($Redact) { $exceptionsContent = Protect-NLSExceptionsRedaction -Content $exceptionsContent }
+    $exceptionsContent | Out-File -FilePath $OutputPath -Encoding utf8 -Force
     Write-Host "  [+] Exceptions list written to: $OutputPath" -ForegroundColor Green
 }
 
