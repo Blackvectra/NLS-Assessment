@@ -832,25 +832,20 @@ $allResults = @{
     BreakGlass                 = $breakGlassResults
 }
 
+# Pass framework flags directly from current variable values
+# PSBoundParameters check is NOT used here -- profiles set variables directly
+# so we read the variables, not the parameter binding state
+$anyFramework = [bool]$NIST -or [bool]$CIS -or [bool]$HIPAA -or [bool]$HIPAAProposed -or [bool]$ZeroTrust
+
 $scoringParams = @{
     Results      = $allResults
     Redact       = $runRedaction
+    NIST         = if ($anyFramework) { [bool]$NIST } else { $true } # Default to NIST if none passed
+    CIS          = [bool]$CIS
+    HIPAA        = [bool]$HIPAA
+    HIPAAProposed = [bool]$HIPAAProposed
     ZeroTrust    = [bool]$ZeroTrust
     DebugMode    = [bool]$DebugScoring
-}
-
-if ($PSBoundParameters.ContainsKey('NIST'))          { $scoringParams.NIST          = $NIST.IsPresent }
-if ($PSBoundParameters.ContainsKey('CIS'))           { $scoringParams.CIS           = $CIS.IsPresent }
-if ($PSBoundParameters.ContainsKey('HIPAA'))         { $scoringParams.HIPAA         = $HIPAA.IsPresent }
-if ($PSBoundParameters.ContainsKey('HIPAAProposed')) { $scoringParams.HIPAAProposed = $HIPAAProposed.IsPresent }
-
-# Default to NIST only when no framework flag was explicitly passed
-if (-not ($PSBoundParameters.ContainsKey('NIST') -or
-          $PSBoundParameters.ContainsKey('CIS') -or
-          $PSBoundParameters.ContainsKey('HIPAA') -or
-          $PSBoundParameters.ContainsKey('HIPAAProposed') -or
-          $PSBoundParameters.ContainsKey('ZeroTrust'))) {
-    $scoringParams.NIST = $true
 }
 
 $scoredResults = Invoke-NLSScoringModel @scoringParams
