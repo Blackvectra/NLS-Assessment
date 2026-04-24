@@ -58,17 +58,25 @@ function Register-NLSException {
 function Get-NLSExceptions { return $script:Exceptions }
 
 function Get-NLSMetadata {
-    param([bool]$Redact = $false)
-    $mgContext  = Get-MgContext -ErrorAction SilentlyContinue
-    $exoModule  = Get-Module ExchangeOnlineManagement -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+    param(
+        [bool]$Redact = $false,
+        [string[]]$ActiveFrameworks = @(),
+        [string[]]$ActiveFeatures = @(),
+        [string]$ExecutionMode = 'Full'
+    )
+    $mgContext   = Get-MgContext -ErrorAction SilentlyContinue
+    $exoModule   = Get-Module ExchangeOnlineManagement -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
     $graphModule = Get-Module Microsoft.Graph.Authentication -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
     $upn = if ($mgContext) { $mgContext.Account } else { 'Unknown' }
     if ($Redact -and $upn -ne 'Unknown') { $upn = '[REDACTED_ADMIN_UPN]' }
     [ordered]@{
-        ExecutionTimeUTC = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-        AuthContext      = $upn
-        GraphScopes      = if ($mgContext) { ($mgContext.Scopes -join ', ') } else { $null }
-        ModuleVersions   = [ordered]@{
+        ExecutionTimeUTC  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        AuthContext       = $upn
+        ExecutionMode     = $ExecutionMode
+        ActiveFrameworks  = if ($ActiveFrameworks.Count -gt 0) { $ActiveFrameworks -join ', ' } else { 'NIST (default)' }
+        ActiveFeatures    = if ($ActiveFeatures.Count -gt 0) { $ActiveFeatures -join ', ' } else { 'Standard' }
+        GraphScopes       = if ($mgContext) { ($mgContext.Scopes -join ', ') } else { $null }
+        ModuleVersions    = [ordered]@{
             ExchangeOnlineManagement     = if ($exoModule) { $exoModule.Version.ToString() } else { 'Not found' }
             MicrosoftGraphAuthentication = if ($graphModule) { $graphModule.Version.ToString() } else { 'Not found' }
         }
