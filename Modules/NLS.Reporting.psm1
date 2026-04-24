@@ -39,6 +39,9 @@ function Publish-NLSAssessmentSummary {
     [void]$sb.AppendLine('|---|---|')
     [void]$sb.AppendLine("| Execution Time (UTC) | $($Metadata.ExecutionTimeUTC) |")
     [void]$sb.AppendLine("| Operator | $($Metadata.AuthContext) |")
+    [void]$sb.AppendLine("| Execution Mode | $($Metadata.ExecutionMode) |")
+    [void]$sb.AppendLine("| Frameworks Active | $($Metadata.ActiveFrameworks) |")
+    [void]$sb.AppendLine("| Features Active | $($Metadata.ActiveFeatures) |")
     [void]$sb.AppendLine("| EXO Module Version | $($Metadata.ModuleVersions.ExchangeOnlineManagement) |")
     [void]$sb.AppendLine("| Graph Module Version | $($Metadata.ModuleVersions.MicrosoftGraphAuthentication) |")
     [void]$sb.AppendLine('')
@@ -138,6 +141,18 @@ function Publish-NLSAssessmentSummary {
         [void]$sb.AppendLine("| $key | $statusIcon | $reason |")
     }
     [void]$sb.AppendLine('')
+
+    # ── Licensing Gaps ───────────────────────────────────────
+    $licensingGaps = $Coverage.GetEnumerator() | Where-Object {
+        $_.Value.Status -eq 'Partial' -and $_.Value.Reason -match 'not recognized|cmdlet|licensing'
+    }
+    if ($licensingGaps) {
+        [void]$sb.AppendLine('> **Licensing Note:** One or more control families could not be assessed due to tenant licensing.')
+        [void]$sb.AppendLine('> Controls marked Partial in the coverage map above require additional licensing to assess.')
+        [void]$sb.AppendLine('> This is a licensing gap, not a security finding. See exceptions log for detail.')
+        [void]$sb.AppendLine('')
+    }
+
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine('')
 
@@ -210,16 +225,57 @@ function Publish-NLSAssessmentSummary {
                     [void]$sb.AppendLine("| **Recommended** | $($finding.Recommended) |")
                 }
 
-                # Framework citations
-                $frameworks = @()
-                if ($finding.NIST_SP800_53_r5) { $frameworks += "**NIST:** $($finding.NIST_SP800_53_r5)" }
-                if ($finding.CIS_v8_1)         { $frameworks += "**CIS:** $($finding.CIS_v8_1)" }
-                if ($finding.HIPAA_Current)    { $frameworks += "**HIPAA (Current):** $($finding.HIPAA_Current)" }
-                if ($finding.HIPAA_Proposed)   { $frameworks += "**HIPAA (Proposed):** $($finding.HIPAA_Proposed)" }
-
-                if ($frameworks.Count -gt 0) {
+                # Per-framework recommendation blocks
+                if ($finding.NIST_SP800_53_r5) {
                     [void]$sb.AppendLine('')
-                    [void]$sb.AppendLine('> *Frameworks: ' + ($frameworks -join ' | ') + '*')
+                    [void]$sb.AppendLine('**NIST SP 800-53 Rev 5**')
+                    [void]$sb.AppendLine('')
+                    [void]$sb.AppendLine("- Controls: $($finding.NIST_SP800_53_r5)")
+                    if ($finding.NIST_Detail) {
+                        [void]$sb.AppendLine("- $($finding.NIST_Detail)")
+                    }
+                    if ($finding.NIST_Requirement) {
+                        [void]$sb.AppendLine("- Requirement level: $($finding.NIST_Requirement)")
+                    }
+                }
+
+                if ($finding.CIS_v8_1) {
+                    [void]$sb.AppendLine('')
+                    [void]$sb.AppendLine('**CIS Controls v8.1**')
+                    [void]$sb.AppendLine('')
+                    [void]$sb.AppendLine("- Safeguards: $($finding.CIS_v8_1)")
+                    if ($finding.CIS_Detail) {
+                        [void]$sb.AppendLine("- $($finding.CIS_Detail)")
+                    }
+                    if ($finding.CIS_Requirement) {
+                        [void]$sb.AppendLine("- Implementation Group: $($finding.CIS_Requirement)")
+                    }
+                }
+
+                if ($finding.HIPAA_Current) {
+                    [void]$sb.AppendLine('')
+                    [void]$sb.AppendLine('**HIPAA Security Rule (Current Enforceable)**')
+                    [void]$sb.AppendLine('')
+                    [void]$sb.AppendLine("- Citations: $($finding.HIPAA_Current)")
+                    if ($finding.HIPAA_Detail) {
+                        [void]$sb.AppendLine("- $($finding.HIPAA_Detail)")
+                    }
+                    if ($finding.HIPAA_Req) {
+                        [void]$sb.AppendLine("- Requirement: $($finding.HIPAA_Req)")
+                    }
+                }
+
+                if ($finding.HIPAA_Proposed) {
+                    [void]$sb.AppendLine('')
+                    [void]$sb.AppendLine('**HIPAA Security Rule (NPRM Proposed — Expected Final May 2026)**')
+                    [void]$sb.AppendLine('')
+                    [void]$sb.AppendLine("- Citations: $($finding.HIPAA_Proposed)")
+                    if ($finding.HIPAA_Proposed_Detail) {
+                        [void]$sb.AppendLine("- $($finding.HIPAA_Proposed_Detail)")
+                    }
+                    if ($finding.HIPAA_Proposed_Req) {
+                        [void]$sb.AppendLine("- Requirement: $($finding.HIPAA_Proposed_Req)")
+                    }
                 }
 
                 if ($finding.Remediation -and $sev -ne 'Satisfied') {
