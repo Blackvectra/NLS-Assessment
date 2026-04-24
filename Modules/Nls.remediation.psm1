@@ -113,7 +113,8 @@ function Publish-NLSRemediationScript {
                     $lines.Add("# Affected mailboxes: $affectedList")
                     $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Affected Mailboxes", "Enable Auditing")) {')
                     foreach ($mbx in $finding.AffectedObjects) {
-                        $lines.Add("    Set-Mailbox -Identity '$mbx' -AuditEnabled `$true")
+                        $safeMbx = $mbx -replace "'", "''"
+                        $lines.Add("    Set-Mailbox -Identity '$safeMbx' -AuditEnabled `$true")
                     }
                 } else {
                     $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("All Mailboxes", "Enable Auditing")) {')
@@ -128,7 +129,10 @@ function Publish-NLSRemediationScript {
                 $lines.Add('# ── Outbound Spam Notification ───────────────────────────')
                 $lines.Add('# Update the recipient address below before running.')
                 if ($nist) { $lines.Add($nist) }
-                $lines.Add('$notifyRecipient = "admin@yourdomain.com"  # UPDATE THIS')
+                $lines.Add('$notifyRecipient = "admin@yourdomain.com"  # UPDATE THIS BEFORE RUNNING')
+                $lines.Add('if ($notifyRecipient -eq "admin@yourdomain.com") {')
+                $lines.Add('    throw "Update notifyRecipient before running. Replace admin@yourdomain.com with the actual alert recipient."')
+                $lines.Add('}')
                 $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Outbound Spam Policy", "Enable Notification")) {')
                 $lines.Add('    Set-HostedOutboundSpamFilterPolicy -Identity Default -NotifyOutboundSpam $true -NotifyOutboundSpamRecipients $notifyRecipient')
                 $lines.Add('    Write-Host "[+] Outbound spam notification enabled" -ForegroundColor Green')
@@ -143,8 +147,9 @@ function Publish-NLSRemediationScript {
                 if ($finding.AffectedObjects -and $finding.AffectedObjects.Count -gt 0) {
                     $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Affected Domains", "Enable DKIM")) {')
                     foreach ($domain in $finding.AffectedObjects) {
-                        $lines.Add("    Enable-DkimSigningConfig -Identity '$domain'")
-                        $lines.Add("    Write-Host '[+] DKIM enabled for $domain' -ForegroundColor Green")
+                        $safeDomain = $domain -replace "'", "''"
+                        $lines.Add("    Enable-DkimSigningConfig -Identity '$safeDomain'")
+                        $lines.Add("    Write-Host '[+] DKIM enabled for $safeDomain' -ForegroundColor Green")
                     }
                     $lines.Add('}')
                 } else {
@@ -161,8 +166,9 @@ function Publish-NLSRemediationScript {
                 if ($finding.AffectedObjects -and $finding.AffectedObjects.Count -gt 0) {
                     $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Affected Domains", "Enable DNSSEC")) {')
                     foreach ($domain in $finding.AffectedObjects) {
-                        $lines.Add("    Enable-DnssecForVerifiedDomain -DomainName '$domain'")
-                        $lines.Add("    Write-Host '[+] DNSSEC enabled for $domain -- update MX record' -ForegroundColor Green")
+                        $safeDomain = $domain -replace "'", "''"
+                        $lines.Add("    Enable-DnssecForVerifiedDomain -DomainName '$safeDomain'")
+                        $lines.Add("    Write-Host '[+] DNSSEC enabled for $safeDomain -- update MX record' -ForegroundColor Green")
                     }
                     $lines.Add('}')
                 }
@@ -171,11 +177,26 @@ function Publish-NLSRemediationScript {
 
             'SafeLinks' {
                 $lines.Add('# ── Safe Links ───────────────────────────────────────────')
-                $lines.Add('# Manual action required -- enable via Microsoft Defender portal.')
-                $lines.Add('# https://security.microsoft.com > Email & collaboration > Policies & rules > Safe Links')
+                $lines.Add('# Safe Links can be configured via PowerShell or the Defender portal.')
+                $lines.Add('# Portal: https://security.microsoft.com > Email & collaboration > Policies & rules > Safe Links')
                 if ($nist) { $lines.Add($nist) }
-                $lines.Add('Write-Host "[!] Safe Links -- manual action required in Defender portal" -ForegroundColor Yellow')
-                $lines.Add('Write-Host "    https://security.microsoft.com" -ForegroundColor DarkGray')
+                $lines.Add('# Option 1 -- PowerShell (update policy name and domain as needed)')
+                $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Safe Links Policy", "Enable Safe Links")) {')
+                $lines.Add('    # Check if a Safe Links policy already exists')
+                $lines.Add('    $existingPolicy = Get-SafeLinksPolicy -ErrorAction SilentlyContinue | Select-Object -First 1')
+                $lines.Add('    if ($existingPolicy) {')
+                $lines.Add('        # Enable on existing policy')
+                $lines.Add('        Set-SafeLinksPolicy -Identity $existingPolicy.Name -EnableSafeLinksForEmail $true -EnableSafeLinksForTeams $true -EnableSafeLinksForOffice $true -TrackClicks $true -ScanUrls $true')
+                $lines.Add('        Write-Host "[+] Safe Links enabled on existing policy: $($existingPolicy.Name)" -ForegroundColor Green')
+                $lines.Add('    } else {')
+                $lines.Add('        # Create new policy and rule')
+                $lines.Add('        New-SafeLinksPolicy -Name "Safe Links Policy" -EnableSafeLinksForEmail $true -EnableSafeLinksForTeams $true -EnableSafeLinksForOffice $true -TrackClicks $true -ScanUrls $true')
+                $lines.Add('        New-SafeLinksRule -Name "Safe Links Rule" -SafeLinksPolicy "Safe Links Policy" -RecipientDomainIs (Get-AcceptedDomain | Select-Object -ExpandProperty DomainName) -Priority 0')
+                $lines.Add('        Write-Host "[+] Safe Links policy and rule created" -ForegroundColor Green')
+                $lines.Add('    }')
+                $lines.Add('}')
+                $lines.Add('# Option 2 -- Defender portal (recommended for full configuration):')
+                $lines.Add('Write-Host "    Portal: https://security.microsoft.com > Email & collaboration > Policies & rules > Safe Links" -ForegroundColor DarkGray')
                 $lines.Add('')
             }
 
@@ -219,7 +240,8 @@ function Publish-NLSRemediationScript {
     $lines.Add('Write-Host "Remediation complete. Re-run assessment to verify." -ForegroundColor Cyan')
     $lines.Add('Write-Host "NextLayerSec -- nextlayersec.io"')
 
-    $lines | Out-File -FilePath $OutputPath -Encoding utf8 -Force
+    $outputContent = $lines.ToArray()
+    [System.IO.File]::WriteAllLines($OutputPath, $outputContent, [System.Text.Encoding]::UTF8)
     Write-Host "  [+] Remediation script written to: $OutputPath" -ForegroundColor Green
 }
 
