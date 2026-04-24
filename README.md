@@ -6,14 +6,14 @@
 > HIPAA NPRM proposed rule, and CISA Zero Trust Maturity Model.
 > Produces structured markdown artifacts with granular finding detail,
 > affected object lists, current state vs recommended comparisons,
-> per-framework recommendation blocks, Secure Score integration,
-> per-user MFA gap analysis, and extended tenant security inventory.
+> per-framework recommendation blocks, delta reporting, remediation scripts,
+> and cross-tenant portfolio summaries.
 
 [![License](https://img.shields.io/badge/License-CC%20BY--ND%204.0-blue?style=flat-square)](https://creativecommons.org/licenses/by-nd/4.0/)
 [![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?style=flat-square)](https://github.com/PowerShell/PowerShell)
 [![Read Only](https://img.shields.io/badge/Mode-Read--Only-00c853?style=flat-square)]()
 [![Frameworks](https://img.shields.io/badge/Frameworks-NIST%20%7C%20CIS%20%7C%20HIPAA%20%7C%20ZeroTrust-orange?style=flat-square)]()
-[![Version](https://img.shields.io/badge/Version-2.0.0-white?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-2.1.0-white?style=flat-square)]()
 
 ---
 
@@ -22,6 +22,9 @@
 | Feature | Description |
 |---|---|
 | Assessment profiles | `-P Quick/Standard/HIPAA/MSP/ZeroTrust/Full` — predefined flag bundles |
+| Remediation script | Auto-generated per-tenant PowerShell remediation script every run |
+| Delta reporting | Compares current run against previous — surfaces improved, regressed, new |
+| Portfolio summary | `Invoke-NLSSummary.ps1` — cross-tenant view ranked by risk score |
 | Granular finding detail | Affected object lists on every count-based finding |
 | Current state vs recommended | Structured comparison table per finding |
 | Per-framework recommendation blocks | Each framework gets its own section with control name, detail, and requirement level |
@@ -31,7 +34,7 @@
 | User MFA gap analysis | Per-user MFA registration status with admin flagging (`-MFAReport`) |
 | Secure Score integration | Current score, top gaps, per-control improvement opportunities (`-SecureScore`) |
 | Zero Trust flag | CISA Zero Trust Maturity Model mapping (`-ZeroTrust`) |
-| Auto-open report | `-OpenReport` opens `AssessmentSummary.md` on completion |
+| Auto-open report | Reports open in VS Code automatically if installed |
 | Legacy auth telemetry | Accounts with active legacy auth attempts surfaced by name |
 | DMARC policy check | DMARC policy state per domain via DNS (`-DMARC`) |
 | Admin role inventory | Global Admin count, over-privilege detection (`-AdminRoles`) |
@@ -47,11 +50,13 @@
 
 ## Overview
 
-`Invoke-NLSAssessment` is a precision read-only assessment instrument. It connects to Exchange Online and Microsoft Graph, collects security policy configuration and sign-in telemetry, scores findings against the NextLayerSec baseline, and produces structured markdown artifacts mapped to authoritative compliance frameworks.
+`Invoke-NLSAssessment` is a precision read-only assessment instrument built for MSP and consulting operations. It connects to Exchange Online and Microsoft Graph, collects security policy configuration and sign-in telemetry, scores findings against the NextLayerSec baseline, and produces structured markdown artifacts mapped to authoritative compliance frameworks.
 
 **No tenant configuration changes are made at any point.**
 
-Each finding is state-aware — returning Satisfied, Partial, or Gap — with citations mapped to the specific control that requires or recommends the configuration.
+Every run produces three artifacts — the assessment report, a remediation script, and an exceptions log. If a previous report exists for the same tenant, the report automatically includes a delta section showing what changed since the last run.
+
+Run `Invoke-NLSSummary.ps1` after assessing multiple tenants to get a portfolio-level view ranked by risk score.
 
 ---
 
@@ -133,6 +138,8 @@ Profiles are predefined bundles of framework and feature flags. Use `-P` instead
 | ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts |
 | Full | `-P Full` | All frameworks | All features |
 
+Profiles are additive — extra flags passed alongside `-P` expand the profile.
+
 ### Why Profiles
 
 Before:
@@ -180,14 +187,9 @@ Displays branded help with the full profile table, all flags, examples, permissi
 
 # Profile expanded with extra flag
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore -OpenReport
-
-# Profile expanded with multiple extra flags
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -ZeroTrust -SecureScore -RedactSensitiveData
 ```
 
 ### Manual Flags (No Profile)
-
-Use individual flags for custom combinations:
 
 ```powershell
 # NIST + CIS with DMARC only
@@ -197,9 +199,23 @@ Use individual flags for custom combinations:
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NoGraph -HIPAA -HIPAAProposed -RedactSensitiveData
 ```
 
-### Redacted Output
+### Delta Comparison
 
-Pass `-RedactSensitiveData` with any profile or flag combination. Scrubs UPNs, GUIDs, IP addresses, and tenant-specific URLs from all output including the exceptions log.
+Delta runs automatically when a previous report exists for the same tenant in the output folder. To manually specify a previous report:
+
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -Compare ".\output\ndaco-20260301.md"
+```
+
+### Portfolio Summary
+
+Run after completing assessments across multiple tenants:
+
+```powershell
+.\Invoke-NLSSummary.ps1
+```
+
+Reads all reports in `output\`, ranks tenants by risk score, produces `NLS-Portfolio-<date>.md` and opens it in VS Code.
 
 ### Navigate to Tool Directory
 
@@ -213,12 +229,106 @@ cd ~\Downloads\NLS-Assessment
 
 ---
 
+## Output
+
+Every assessment run produces three files in `output\` named using the tenant domain and date.
+
+| File | Example | Contents |
+|---|---|---|
+| `<tenant>-<date>.md` | `ndaco-20260424.md` | Full assessment report |
+| `<tenant>-<date>-remediation.ps1` | `ndaco-20260424-remediation.ps1` | Ready-to-review remediation script |
+| `<tenant>-<date>-exceptions.md` | `ndaco-20260424-exceptions.md` | Non-fatal collection errors |
+
+The tenant name is extracted from the admin UPN — `admin@ndaco.org` produces `ndaco`.
+
+Reports open automatically in VS Code after each run if VS Code is installed.
+
+### Remediation Script
+
+The remediation script is scoped to exactly what was found in the assessment. It includes safety controls, confirmation prompts, and inline framework citations.
+
+```powershell
+# Preview changes without applying
+.\ndaco-20260424-remediation.ps1 -UserPrincipalName admin@ndaco.org -WhatIf
+
+# Apply with confirmation prompts
+.\ndaco-20260424-remediation.ps1 -UserPrincipalName admin@ndaco.org
+
+# Apply without prompts
+.\ndaco-20260424-remediation.ps1 -UserPrincipalName admin@ndaco.org -Force
+```
+
+**Always review the remediation script before running.** Controls that require portal action (CA policies, Safe Links) are flagged with portal links rather than commands.
+
+### Delta Report
+
+When a previous report exists for the same tenant, the report includes a delta section:
+
+```markdown
+## Delta Report
+
+Comparison against previous report: ndaco-20260301.md
+
+| Category    | Count |
+|-------------|:-----:|
+| Improved    | 4     |
+| Regressed   | 1     |
+| Unchanged   | 12    |
+| New Findings| 0     |
+
+### Improved
+| Control                              | Previous | Current   |
+|--------------------------------------|:--------:|:---------:|
+| Disable SMTP client authentication   | Gap      | Satisfied |
+| Disable POP3 on all mailboxes        | Gap      | Satisfied |
+
+### Regressed
+> **Action required. Controls that previously passed have regressed.**
+
+| Control                | Previous  | Current |
+|------------------------|:---------:|:-------:|
+| Enable outbound spam   | Satisfied | Gap     |
+```
+
+### Portfolio Summary
+
+```markdown
+## Tenant Rankings
+
+| Rank | Tenant     | Risk Score | Gap | Partial | Satisfied | Total | Last Assessment |
+|:----:|------------|:----------:|:---:|:-------:|:---------:|:-----:|-----------------|
+| 1    | NDACO      | 🔴 20      | 10  | 2       | 8         | 20    | 2026-04-24      |
+| 2    | DUNNCOUNTY | 🟡 8       | 4   | 3       | 3         | 10    | 2026-04-24      |
+| 3    | CORNERPOST | 🟢 4       | 2   | 2       | 9         | 13    | 2026-04-24      |
+```
+
+### Report Sections (in order)
+
+1. **Assessment Metadata** — execution time, operator, profile used, frameworks active, features active
+2. **Delta Report** — comparison against previous run if available
+3. **Microsoft Secure Score** — current score, top improvement opportunities (if `-SecureScore`)
+4. **User MFA Status** — per-user MFA registration with admin flagging (if `-MFAReport`)
+5. **Executive Summary** — Gap/Partial/Satisfied counts
+6. **Collection Coverage** — status per control family with licensing gap notice
+7. **Admin Role Inventory** — role table with over-privilege detection (if `-AdminRoles`)
+8. **Stale Account Analysis** — inactive accounts with last sign-in (if `-StaleAccounts`)
+9. **Guest Account Inventory** — external guests with stale detection (if `-GuestInventory`)
+10. **Named Locations** — Zero Trust gap warning if none defined (if `-NamedLocations`)
+11. **Service Principal Inventory** — high-privilege app detection (if `-ServicePrincipals`)
+12. **DMARC Policy Status** — policy state per domain (if `-DMARC`)
+13. **Shared Mailbox Hardening** — interactive sign-in and legacy protocol exposure (if `-SharedMailboxes`)
+14. **Conditional Access Policy Inventory** — full policy table and missing policy checklist
+15. **Findings** — grouped by severity and category with full v2 detail
+
+---
+
 ## Architecture
 
 ```
 NLS-Assessment/
 |
 |-- Invoke-NLSAssessment.ps1           # Orchestrator -- run this
+|-- Invoke-NLSSummary.ps1              # Portfolio summary across all tenants
 |
 |-- Modules/
 |   |-- NLS.Core.psm1                  # Output safety, coverage, exceptions, security controls
@@ -226,12 +336,17 @@ NLS-Assessment/
 |   |-- NLS.ConditionalAccess.psm1     # Graph CA, telemetry, MFA, Secure Score, inventory
 |   |-- NLS.FrameworkDictionary.psm1   # 228 state-aware compliance citations (data only)
 |   |-- NLS.Scoring.psm1               # Scoring engine with affected objects and state comparison
-|   `-- NLS.Reporting.psm1             # Markdown report with all v2 sections
+|   |-- NLS.Reporting.psm1             # Markdown report with all v2 sections
+|   |-- NLS.Remediation.psm1           # Remediation script generator
+|   `-- NLS.Delta.psm1                 # Delta comparison and reporting
 |
 |-- output/
-|   `-- <timestamp>/
-|       |-- AssessmentSummary.md       # Full findings report
-|       `-- Exceptions.md             # Collection exceptions log
+|   |-- ndaco-20260424.md
+|   |-- ndaco-20260424-remediation.ps1
+|   |-- ndaco-20260424-exceptions.md
+|   |-- dunncounty-20260424.md
+|   |-- dunncounty-20260424-remediation.ps1
+|   `-- NLS-Portfolio-20260424.md
 |
 |-- README.md
 `-- .gitignore
@@ -249,8 +364,6 @@ Update procedure:
 5. Commit and tag release
 
 ### Security Controls in NLS.Core
-
-v2 adds four security functions:
 
 - `Test-NLSInputUPN` — validates UPN format before passing to connection cmdlets
 - `Test-NLSModuleIntegrity` — verifies all NLS modules loaded from expected path, aborts on violation
@@ -301,77 +414,8 @@ Files downloaded from GitHub are marked untrusted by Windows. Run once after dow
 
 ```powershell
 Unblock-File -Path .\Invoke-NLSAssessment.ps1
+Unblock-File -Path .\Invoke-NLSSummary.ps1
 Unblock-File -Path .\Modules\*.psm1
-```
-
----
-
-## Output
-
-All artifacts written to `output\` relative to the script directory.
-
-Files are named using the tenant domain and date:
-
-| File | Example | Contents |
-|---|---|---|
-| `<tenant>-<date>.md` | `ndaco-20260424.md` | Full findings report with all v2 sections |
-| `<tenant>-<date>-exceptions.md` | `ndaco-20260424-exceptions.md` | Non-fatal collection errors — fully redacted when `-RedactSensitiveData` is passed |
-
-The tenant name is extracted from the admin UPN — `admin@ndaco.org` produces `ndaco`.
-
-### Report Sections (in order)
-
-1. **Assessment Metadata** — execution time, operator, profile used, frameworks active, features active
-2. **Microsoft Secure Score** — current score, top improvement opportunities (if `-SecureScore`)
-3. **User MFA Status** — per-user MFA registration with admin flagging (if `-MFAReport`)
-4. **Executive Summary** — Gap/Partial/Satisfied counts
-5. **Collection Coverage** — status per control family with licensing gap notice
-6. **Admin Role Inventory** — role table with over-privilege detection (if `-AdminRoles`)
-7. **Stale Account Analysis** — inactive accounts with last sign-in (if `-StaleAccounts`)
-8. **Guest Account Inventory** — external guests with stale detection (if `-GuestInventory`)
-9. **Named Locations** — Zero Trust gap warning if none defined (if `-NamedLocations`)
-10. **Service Principal Inventory** — high-privilege app detection (if `-ServicePrincipals`)
-11. **DMARC Policy Status** — policy state per domain (if `-DMARC`)
-12. **Shared Mailbox Hardening** — interactive sign-in and legacy protocol exposure (if `-SharedMailboxes`)
-13. **Conditional Access Policy Inventory** — full policy table and missing policy checklist
-14. **Findings** — grouped by severity and category with full v2 detail
-
-### Sample v2 Finding
-
-```markdown
-### High
-
-#### Protocols
-
-**Disable POP3 on all mailboxes**
-
-69 of 69 mailboxes have POP3 enabled.
-
-  - user1@contoso.com
-  - user2@contoso.com
-  - user3@contoso.com
-
-| | Value |
-|---|---|
-| **Current State** | Enabled on 69 mailbox(es) |
-| **Recommended** | Disabled on all mailboxes |
-
-**NIST SP 800-53 Rev 5**
-- Controls: CM-7, IA-2(6)
-- CM-7 requires disabling protocols not required for operation. POP3 is unnecessary in modern M365 tenants.
-- Requirement level: Required
-
-**HIPAA Security Rule (Current Enforceable)**
-- Citations: §164.312(a)(2)(i), §164.312(d), §164.312(e)(1)
-- POP3 authenticates with basic credentials, bypassing person authentication and transmission security.
-- Requirement: Addressable
-
-**HIPAA Security Rule (NPRM Proposed — Expected Final May 2026)**
-- Citations: §164.312(a)(2)(i), §164.312(e)(1)
-- Under proposed rule transmission security is mandatory. No addressable alternative pathway.
-- Requirement: Required -- NPRM eliminates addressable distinction
-
-*Remediation:* Run Get-CasMailbox -ResultSize Unlimited | Set-CasMailbox -PopEnabled $false
 ```
 
 ---
@@ -398,7 +442,8 @@ The tenant name is extracted from the admin UPN — `admin@ndaco.org` produces `
 - First Graph run against a new tenant prompts for browser consent
 - Extended inventory flags add significant collection time on large tenants
 - Reports open automatically in VS Code after each run if VS Code is installed
-- If VS Code is not installed and `-OpenReport` is passed, the system default `.md` handler is used instead
+- Remediation scripts are generated every run — review before executing
+- Run `Invoke-NLSSummary.ps1` after assessing multiple tenants for the portfolio view
 
 ---
 
@@ -419,6 +464,7 @@ The tenant name is extracted from the admin UPN — `admin@ndaco.org` produces `
 
 ```powershell
 Unblock-File -Path .\Invoke-NLSAssessment.ps1
+Unblock-File -Path .\Invoke-NLSSummary.ps1
 Unblock-File -Path .\Modules\*.psm1
 ```
 
@@ -455,7 +501,6 @@ Symptom: `ConditionalAccess | Partial | [AccessDenied] : required scopes are mis
 
 Cause: Stale cached Graph token missing `Policy.Read.ConditionalAccess`. Global Admin does not override a cached token.
 
-Fix:
 ```powershell
 Disconnect-MgGraph -ErrorAction SilentlyContinue
 Remove-Item -Path "$env:USERPROFILE\.mg" -Recurse -Force -ErrorAction SilentlyContinue
@@ -472,7 +517,7 @@ Cause: Tenant does not have Defender for Office 365 Plan 1 or Plan 2. Required l
 - Microsoft Defender for Office 365 Plan 1 or Plan 2
 - Microsoft 365 E3/E5
 
-This is a licensing gap, not a security finding. All other controls still assess correctly.
+This is a licensing gap, not a security finding.
 
 ### MFA Report returns Partial
 
@@ -496,15 +541,21 @@ Options:
 - Use `-NoGraph` to skip Graph and run Exchange checks only
 - Exclude the admin account from the device compliance CA policy in Entra ID
 
-### Operator shows as Unknown
+### Portfolio summary shows no reports
 
-Graph was not connected when metadata was collected. Run with Graph enabled or use a profile that includes Graph.
+Symptom: `No tenant reports found in: .\output`
+
+Run at least one assessment first:
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
+.\Invoke-NLSSummary.ps1
+```
 
 ### Module integrity violation
 
 Symptom: `MODULE INTEGRITY VIOLATION DETECTED`
 
-A module loaded from an unexpected path. Verify the `Modules/` directory and re-download from the repo.
+A module loaded from an unexpected path. Verify the `Modules\` directory and re-download from the repo.
 
 ---
 
@@ -512,6 +563,7 @@ A module loaded from an unexpected path. Verify the `Modules/` directory and re-
 
 | Version | Date | Notes |
 |---|---|---|
+| 2.1.0 | 2026-04-24 | Delta reporting, remediation script generator, portfolio summary |
 | 2.0.0 | 2026-04-24 | Full v2 build — profiles, all features, security hardening, extended inventory |
 | 1.0.0 | 2026-04-24 | Initial release — public repo nextlayersec-assessment |
 
