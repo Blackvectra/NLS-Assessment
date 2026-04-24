@@ -1,0 +1,12 @@
+# Assessment artifacts -- never commit client data
+output/
+
+# PowerShell session files
+*.ps1xml
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
