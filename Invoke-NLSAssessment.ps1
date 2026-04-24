@@ -168,8 +168,29 @@ param (
     [switch]$DMARC,             # DMARC policy state per domain
 
     [Parameter(Mandatory = $false)]
+    [switch]$DNSRecords,        # Live DNS lookup -- SPF, DMARC, DKIM records per domain
+
+    [Parameter(Mandatory = $false)]
+    [switch]$MailFlowHardening, # MTA-STS, inbound spam, malware filter checks
+
+    [Parameter(Mandatory = $false)]
+    [switch]$IdentityHardening, # Security defaults, SSPR, auth methods, consent, PIM
+
+    [Parameter(Mandatory = $false)]
+    [switch]$BreakGlass,        # Break-glass account configuration check
+
+    [Parameter(Mandatory = $false)]
     [switch]$SharedMailboxes,   # Shared mailbox hardening check
     # ─────────────────────────────────────────────────────────
+
+    [Parameter(Mandatory = $false)]
+    [switch]$ClearToken,       # Force clear cached Graph token before connecting
+
+    [Parameter(Mandatory = $false)]
+    [switch]$GenerateManifest, # Generate SHA-256 hash manifest for module integrity baseline
+
+    [Parameter(Mandatory = $false)]
+    [switch]$DebugScoring,      # Surface verbose scoring errors to console during assessment
 
     [Parameter(Mandatory = $false)]
     [switch]$RedactSensitiveData
@@ -219,6 +240,8 @@ if ($P) {
             if (-not $PSBoundParameters.ContainsKey('GuestInventory')) { $GuestInventory = $true }
             if (-not $PSBoundParameters.ContainsKey('DMARC'))          { $DMARC          = $true }
             if (-not $PSBoundParameters.ContainsKey('SharedMailboxes')){ $SharedMailboxes = $true }
+            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))     { $DNSRecords      = $true }
+            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening')) { $MailFlowHardening = $true }
         }
 
         'ZeroTrust' {
@@ -230,6 +253,8 @@ if ($P) {
             if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport          = $true }
             if (-not $PSBoundParameters.ContainsKey('ServicePrincipals'))  { $ServicePrincipals  = $true }
             if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))      { $StaleAccounts      = $true }
+            if (-not $PSBoundParameters.ContainsKey('IdentityHardening'))  { $IdentityHardening  = $true }
+            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))         { $BreakGlass         = $true }
         }
 
         'Full' {
@@ -248,6 +273,10 @@ if ($P) {
             if (-not $PSBoundParameters.ContainsKey('ServicePrincipals'))  { $ServicePrincipals  = $true }
             if (-not $PSBoundParameters.ContainsKey('DMARC'))              { $DMARC              = $true }
             if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))    { $SharedMailboxes    = $true }
+            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))         { $DNSRecords         = $true }
+            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening'))  { $MailFlowHardening  = $true }
+            if (-not $PSBoundParameters.ContainsKey('IdentityHardening'))  { $IdentityHardening  = $true }
+            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))         { $BreakGlass         = $true }
         }
     }
     Write-Host "[*] Profile: $P applied" -ForegroundColor Cyan
@@ -270,9 +299,15 @@ if ($args -contains '--help' -or $args -contains '-h') {
     Write-Host 'CONNECTION' -ForegroundColor Yellow
     Write-Host '  -UserPrincipalName     Admin UPN for Exchange Online and Graph'
     Write-Host '  -SkipConnect           Skip connection if already authenticated'
+    Write-Host '  -ClearToken            Clear cached Graph token before connecting (fixes AccessDenied)'
     Write-Host '  -NoGraph               Exchange Online only -- no Graph required'
     Write-Host '  -Quick                 Skip sign-in log telemetry'
     Write-Host '  -NoTelemetry           Same as -Quick'
+    Write-Host ''
+    Write-Host 'SETUP' -ForegroundColor Yellow
+    Write-Host '  -GenerateManifest      Generate SHA-256 hash manifest for module integrity baseline'
+    Write-Host '                         Run once after clean install or after updating modules'
+    Write-Host '  -DebugScoring          Surface verbose scoring errors -- use when investigating null/exception errors'
     Write-Host ''
     Write-Host 'FRAMEWORKS' -ForegroundColor Yellow
     Write-Host '  -NIST                  NIST SP 800-53 Rev 5 Release 5.2.0'
@@ -389,6 +424,10 @@ $runNamedLocations    = [bool]$NamedLocations -and $runGraph
 $runServicePrincipals = [bool]$ServicePrincipals -and $runGraph
 $runDMARC             = [bool]$DMARC
 $runSharedMailboxes   = [bool]$SharedMailboxes
+$runDNSRecords        = [bool]$DNSRecords
+$runMailFlowHardening = [bool]$MailFlowHardening
+$runIdentityHardening = [bool]$IdentityHardening -and $runGraph
+$runBreakGlass        = [bool]$BreakGlass -and $runGraph
 
 if ($P) {
     Write-Host "[*] Profile: $P" -ForegroundColor Cyan
@@ -428,6 +467,10 @@ if ($runNamedLocations)    { $activeFeatures += 'Named Locations' }
 if ($runServicePrincipals) { $activeFeatures += 'Service Principals' }
 if ($runDMARC)             { $activeFeatures += 'DMARC' }
 if ($runSharedMailboxes)   { $activeFeatures += 'Shared Mailboxes' }
+if ($runDNSRecords)        { $activeFeatures += 'DNS Records' }
+if ($runMailFlowHardening) { $activeFeatures += 'Mail Flow Hardening' }
+if ($runIdentityHardening) { $activeFeatures += 'Identity Hardening' }
+if ($runBreakGlass)        { $activeFeatures += 'Break Glass' }
 if ($activeFeatures.Count -gt 0) {
     Write-Host ($activeFeatures -join ', ') -ForegroundColor White
 } else {
@@ -492,6 +535,14 @@ foreach ($mod in $moduleFiles) {
     }
 }
 
+# Generate hash manifest if requested -- run this after clean install or update
+if ($GenerateManifest) {
+    Write-Host '[-] Generating module hash manifest...' -ForegroundColor DarkGray
+    $null = New-NLSModuleHashManifest -ModulesPath $modulesDir
+    Write-Host '  [+] Manifest generated. Re-run without -GenerateManifest to run assessment.' -ForegroundColor Green
+    exit 0
+}
+
 # Module integrity check -- verify all NLS modules loaded from expected path
 $integrityCheck = Test-NLSModuleIntegrity -ExpectedModulesPath $modulesDir
 if (-not $integrityCheck.Passed) {
@@ -503,6 +554,11 @@ if (-not $integrityCheck.Passed) {
     exit 1
 }
 Write-Host '  [+] Module integrity verified' -ForegroundColor DarkGray
+if ($integrityCheck.Warnings) {
+    foreach ($w in $integrityCheck.Warnings) {
+        Write-Host "  [!] $w" -ForegroundColor Yellow
+    }
+}
 
 # ─────────────────────────────────────────────
 # Output Directory Setup
@@ -562,8 +618,18 @@ if (-not $SkipConnect) {
     }
 
     if ($runGraph) {
+        # Always disconnect stale session; if -ClearToken passed also wipe WAM cache
+        try { $null = Disconnect-MgGraph -ErrorAction SilentlyContinue 2>$null } catch { }
+        if ($ClearToken) {
+            Write-Host '  [*] Clearing cached Graph token...' -ForegroundColor DarkGray
+            Remove-Item -Path "$env:USERPROFILE\.mg" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$env:LOCALAPPDATA\Microsoft\TokenCache" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host '  [+] Token cache cleared' -ForegroundColor Green
+        }
+
         $graphScopes = @(
             'Policy.Read.ConditionalAccess',
+            'Policy.Read.All',
             'Directory.Read.All'
         )
         if ($runTelemetry)  { $graphScopes += 'AuditLog.Read.All' }
@@ -609,6 +675,24 @@ if ($runSharedMailboxes) {
     $sharedMailboxResults = @{}
 }
 
+if ($runDNSRecords) {
+    Write-Host '[-] Looking up DNS email records (SPF, DMARC, DKIM)...' -ForegroundColor DarkGray
+    $dnsRecordResults = Get-NLSDNSEmailRecords -Redact $runRedaction
+} else {
+    Register-NLSCoverage -ControlFamily 'DNSEmailRecords' `
+        -Status 'NotCollected' -Reason 'Operator did not pass -DNSRecords flag'
+    $dnsRecordResults = @{}
+}
+
+if ($runMailFlowHardening) {
+    Write-Host '[-] Collecting mail flow hardening status...' -ForegroundColor DarkGray
+    $mailFlowResults = Get-NLSMailFlowHardening -Redact $runRedaction
+} else {
+    Register-NLSCoverage -ControlFamily 'MTASTS' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
+    Register-NLSCoverage -ControlFamily 'InboundSpam' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
+    Register-NLSCoverage -ControlFamily 'MalwareFilter' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
+}
+
 $caResults                = @{}
 $caTelemetryResults       = @{}
 $mfaStatusResults         = @{}
@@ -620,6 +704,10 @@ $namedLocationResults     = @{}
 $servicePrincipalResults  = @{}
 $dmarcResults             = @{}
 $sharedMailboxResults     = @{}
+$dnsRecordResults         = @{}
+$mailFlowResults          = @{}
+$identityHardeningResults = @{}
+$breakGlassResults        = @{}
 
 if ($runGraph) {
     Write-Host '[-] Collecting Conditional Access policies...' -ForegroundColor DarkGray
@@ -689,6 +777,22 @@ if ($runGraph) {
         Register-NLSCoverage -ControlFamily 'ServicePrincipalInventory' `
             -Status 'NotCollected' -Reason 'Operator did not pass -ServicePrincipals flag'
     }
+
+    if ($runIdentityHardening) {
+        Write-Host '[-] Collecting identity hardening status...' -ForegroundColor DarkGray
+        $identityHardeningResults = Get-NLSIdentityHardening -Redact $runRedaction
+    } else {
+        foreach ($family in @('SecurityDefaults','PasswordProtection','SSPR','AuthenticationMethods','ConsentFramework','ExternalCollaboration','PIM')) {
+            Register-NLSCoverage -ControlFamily $family -Status 'NotCollected' -Reason 'Operator did not pass -IdentityHardening flag'
+        }
+    }
+
+    if ($runBreakGlass) {
+        Write-Host '[-] Checking break-glass account configuration...' -ForegroundColor DarkGray
+        $breakGlassResults = Get-NLSBreakGlassAccount -Redact $runRedaction
+    } else {
+        Register-NLSCoverage -ControlFamily 'BreakGlassAccounts' -Status 'NotCollected' -Reason 'Operator did not pass -BreakGlass flag'
+    }
 } else {
     Register-NLSCoverage -ControlFamily 'ConditionalAccess' `
         -Status 'NotCollected' -Reason 'Operator specified -NoGraph'
@@ -723,12 +827,16 @@ $allResults = @{
     ConditionalAccessTelemetry = $caTelemetryResults
     DMARC                      = $dmarcResults
     SharedMailboxes            = $sharedMailboxResults
+    MailFlow                   = $mailFlowResults
+    IdentityHardening          = $identityHardeningResults
+    BreakGlass                 = $breakGlassResults
 }
 
 $scoringParams = @{
     Results      = $allResults
     Redact       = $runRedaction
     ZeroTrust    = [bool]$ZeroTrust
+    DebugMode    = [bool]$DebugScoring
 }
 
 if ($PSBoundParameters.ContainsKey('NIST'))          { $scoringParams.NIST          = $NIST.IsPresent }
@@ -755,6 +863,9 @@ Write-Host ''
 
 Write-Host '[-] Generating assessment artifacts...' -ForegroundColor DarkGray
 
+# Initialize delta data -- will be populated after report path is known
+$deltaData = [ordered]@{ Available = $false }
+
 $summaryPath    = Join-Path $outDir "$reportName.md"
 $exceptionsPath = Join-Path $outDir "$reportName-exceptions.md" 
 
@@ -770,6 +881,15 @@ if ($namedLocationResults -and $namedLocationResults['NamedLocations'])         
 if ($servicePrincipalResults -and $servicePrincipalResults['ServicePrincipalInventory']) { $extendedData['ServicePrincipalInventory'] = $servicePrincipalResults['ServicePrincipalInventory'] }
 if ($dmarcResults -and $dmarcResults['DMARC'])                                     { $extendedData['DMARC']                    = $dmarcResults['DMARC'] }
 if ($sharedMailboxResults -and $sharedMailboxResults['SharedMailboxHardening'])    { $extendedData['SharedMailboxHardening']   = $sharedMailboxResults['SharedMailboxHardening'] }
+if ($dnsRecordResults -and $dnsRecordResults['DNSEmailRecords'])                   { $extendedData['DNSEmailRecords']          = $dnsRecordResults['DNSEmailRecords'] }
+if ($mailFlowResults -and $mailFlowResults['MTASTS'])                               { $extendedData['MTASTS']                   = $mailFlowResults['MTASTS'] }
+if ($mailFlowResults -and $mailFlowResults['InboundSpam'])                          { $extendedData['InboundSpam']              = $mailFlowResults['InboundSpam'] }
+if ($mailFlowResults -and $mailFlowResults['MalwareFilter'])                        { $extendedData['MalwareFilter']            = $mailFlowResults['MalwareFilter'] }
+if ($identityHardeningResults -and $identityHardeningResults['SecurityDefaults'])   { $extendedData['SecurityDefaults']         = $identityHardeningResults['SecurityDefaults'] }
+if ($identityHardeningResults -and $identityHardeningResults['AuthenticationMethods']) { $extendedData['AuthenticationMethods'] = $identityHardeningResults['AuthenticationMethods'] }
+if ($identityHardeningResults -and $identityHardeningResults['ConsentFramework'])   { $extendedData['ConsentFramework']         = $identityHardeningResults['ConsentFramework'] }
+if ($identityHardeningResults -and $identityHardeningResults['PIM'])               { $extendedData['PIM']                      = $identityHardeningResults['PIM'] }
+if ($breakGlassResults -and $breakGlassResults['BreakGlassAccounts'])              { $extendedData['BreakGlassAccounts']        = $breakGlassResults['BreakGlassAccounts'] }
 
 Publish-NLSAssessmentSummary `
     -ScoredResults $scoredResults `
@@ -790,14 +910,13 @@ Publish-NLSExceptionsList `
 
 # ── Remediation Script ────────────────────────────────────────
 $remediationPath = Join-Path $outDir "$reportName-remediation.ps1"
-Publish-NLSRemediationScript `
+[void](Publish-NLSRemediationScript `
     -ScoredResults $scoredResults `
     -OutputPath $remediationPath `
     -TenantName $tenantName `
-    -Redact $runRedaction
+    -Redact $runRedaction)
 
 # ── Delta Reporting ───────────────────────────────────────────
-$deltaData = @{ Available = $false }
 
 # Try manual path first, then auto-find
 $previousReport = $null
@@ -845,15 +964,16 @@ Write-Host ''
 
 # Auto-open report in VS Code if installed
 $reportFile = Join-Path $outDir "$reportName.md"
-$vsCode     = Get-Command code -ErrorAction SilentlyContinue
-if ($vsCode -and (Test-Path $reportFile)) {
-    Write-Host '[-] Opening report in VS Code...' -ForegroundColor DarkGray
-    & code $reportFile
-} elseif ($OpenReport -and (Test-Path $reportFile)) {
-    # -OpenReport flag passed but VS Code not found -- use system default
-    Write-Host '[-] VS Code not found. Opening with system default...' -ForegroundColor DarkGray
-    Start-Process $reportFile
-}
+try {
+    $vsCode = Get-Command code -ErrorAction SilentlyContinue
+    if ($vsCode -and (Test-Path $reportFile)) {
+        Write-Host '[-] Opening report in VS Code...' -ForegroundColor DarkGray
+        $null = Start-Process -FilePath 'code' -ArgumentList $reportFile -ErrorAction SilentlyContinue
+    } elseif ($OpenReport -and (Test-Path $reportFile)) {
+        Write-Host '[-] Opening report...' -ForegroundColor DarkGray
+        Start-Process $reportFile
+    }
+} catch { }
 
 # ─────────────────────────────────────────────
 # Disconnect
@@ -862,7 +982,7 @@ if ($vsCode -and (Test-Path $reportFile)) {
 if (-not $SkipConnect) {
     try {
         Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
-        if ($runGraph) { Disconnect-MgGraph -ErrorAction SilentlyContinue }
+        if ($runGraph) { $null = Disconnect-MgGraph -ErrorAction SilentlyContinue 2>$null }
         Write-Host '[-] Sessions disconnected.' -ForegroundColor DarkGray
     } catch { }
 }
