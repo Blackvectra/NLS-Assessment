@@ -18,8 +18,7 @@ function Get-NLSExchangePolicies {
         $authPolicies = Get-AuthenticationPolicy -ErrorAction Stop
         $orgConfig    = Get-OrganizationConfig -ErrorAction Stop
         $policyResults = foreach ($policy in $authPolicies) {
-            $basicAuthProps = $policy | Select-Object -Property AllowBasicAuth* |
-                Select-Object -ExpandProperty PSObject | Select-Object -ExpandProperty Properties
+            $basicAuthProps = $policy.PSObject.Properties | Where-Object { $_.Name -like 'AllowBasicAuth*' }
             $failures = $basicAuthProps | Where-Object { $_.Value -eq $true }
             [ordered]@{
                 PolicyName    = $policy.Name
