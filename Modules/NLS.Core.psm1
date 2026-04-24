@@ -11,6 +11,104 @@
 $script:Exceptions = @()
 $script:CoverageMap = [ordered]@{}
 
+# ─────────────────────────────────────────────
+# Security Controls
+# ─────────────────────────────────────────────
+
+function Test-NLSModuleIntegrity {
+    <#
+    .SYNOPSIS
+        Verifies all loaded NLS modules are from the expected path.
+        Prevents malicious psm1 injection into the Modules directory.
+    #>
+    param([string]$ExpectedModulesPath)
+
+    $nlsModules = Get-Module | Where-Object { $_.Name -like 'NLS.*' }
+    $violations  = @()
+
+    foreach ($mod in $nlsModules) {
+        $modPath = Split-Path $mod.Path -Parent
+        if ($modPath -ne $ExpectedModulesPath) {
+            $violations += [ordered]@{
+                Module       = $mod.Name
+                LoadedFrom   = $mod.Path
+                ExpectedPath = $ExpectedModulesPath
+            }
+        }
+    }
+
+    return [ordered]@{
+        Passed     = $violations.Count -eq 0
+        Violations = $violations
+    }
+}
+
+function Test-NLSInputUPN {
+    <#
+    .SYNOPSIS
+        Validates UPN format before passing to Exchange/Graph connections.
+        Prevents malformed input from reaching connection cmdlets.
+    #>
+    param([string]$UPN)
+
+    if ([string]::IsNullOrWhiteSpace($UPN)) {
+        return [ordered]@{ Valid = $false; Reason = 'UPN cannot be empty' }
+    }
+
+    # RFC 5321 basic format check
+    if ($UPN -notmatch '^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$') {
+        return [ordered]@{ Valid = $false; Reason = "UPN format invalid: $UPN" }
+    }
+
+    return [ordered]@{ Valid = $true; Reason = '' }
+}
+
+function Protect-NLSOutputPath {
+    <#
+    .SYNOPSIS
+        Validates and locks down the output directory permissions.
+        Reduces risk of output tampering on shared systems.
+    #>
+    param([string]$OutputPath)
+
+    try {
+        $acl = Get-Acl -Path $OutputPath -ErrorAction Stop
+        # Restrict to current user only
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $currentUser,
+            'FullControl',
+            'ContainerInherit,ObjectInherit',
+            'None',
+            'Allow'
+        )
+        $acl.SetAccessRuleProtection($true, $false)
+        $acl.AddAccessRule($rule)
+        Set-Acl -Path $OutputPath -AclObject $acl -ErrorAction Stop
+        return $true
+    } catch {
+        # Non-fatal -- log but continue
+        return $false
+    }
+}
+
+function Protect-NLSExceptionsRedaction {
+    <#
+    .SYNOPSIS
+        Applies redaction to exceptions log content.
+        v2 fix -- exceptions were not redacted even when -RedactSensitiveData was passed.
+    #>
+    param([string]$Content)
+
+    $Content = $Content -replace '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '[REDACTED_UPN]'
+    $Content = $Content -replace '[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}', '[REDACTED_ID]'
+    $Content = $Content -replace '(?:[0-9]{1,3}\.){3}[0-9]{1,3}', '[REDACTED_IP]'
+    # Scrub tenant-specific URLs
+    $Content = $Content -replace 'https://[a-zA-Z0-9\-\.]+\.microsoft\.com[^\s]*', '[REDACTED_URL]'
+    $Content = $Content -replace 'https://[a-zA-Z0-9\-\.]+\.office\.com[^\s]*', '[REDACTED_URL]'
+    return $Content
+}
+
 function Export-NLSSafeMarkdown {
     param(
         [Parameter(Mandatory = $true)][string]$Content,
@@ -89,4 +187,8 @@ Export-ModuleMember -Function `
     Get-NLSCoverageMap, `
     Register-NLSException, `
     Get-NLSExceptions, `
-    Get-NLSMetadata
+    Get-NLSMetadata, `
+    Test-NLSModuleIntegrity, `
+    Test-NLSInputUPN, `
+    Protect-NLSOutputPath, `
+    Protect-NLSExceptionsRedaction
