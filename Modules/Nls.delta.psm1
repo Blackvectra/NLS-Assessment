@@ -29,7 +29,8 @@ function Find-NLSPreviousReport {
         } |
         Sort-Object LastWriteTime -Descending
 
-    return if ($reports.Count -gt 0) { $reports[0].FullName } else { $null }
+    if ($reports.Count -gt 0) { return $reports[0].FullName }
+    return $null
 }
 
 function Get-NLSDeltaReport {
