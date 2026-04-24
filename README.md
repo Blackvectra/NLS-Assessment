@@ -308,12 +308,16 @@ Unblock-File -Path .\Modules\*.psm1
 
 ## Output
 
-All artifacts written to `output\<timestamp>\` relative to the script directory.
+All artifacts written to `output\` relative to the script directory.
 
-| File | Contents |
-|---|---|
-| `AssessmentSummary.md` | Full findings report with all v2 sections |
-| `Exceptions.md` | Non-fatal collection errors — fully redacted when `-RedactSensitiveData` is passed |
+Files are named using the tenant domain and date:
+
+| File | Example | Contents |
+|---|---|---|
+| `<tenant>-<date>.md` | `ndaco-20260424.md` | Full findings report with all v2 sections |
+| `<tenant>-<date>-exceptions.md` | `ndaco-20260424-exceptions.md` | Non-fatal collection errors — fully redacted when `-RedactSensitiveData` is passed |
+
+The tenant name is extracted from the admin UPN — `admin@ndaco.org` produces `ndaco`.
 
 ### Report Sections (in order)
 
@@ -393,6 +397,8 @@ All artifacts written to `output\<timestamp>\` relative to the script directory.
 - Run from PowerShell 7 — Windows PowerShell 5.1 is not supported
 - First Graph run against a new tenant prompts for browser consent
 - Extended inventory flags add significant collection time on large tenants
+- Reports open automatically in VS Code after each run if VS Code is installed
+- If VS Code is not installed and `-OpenReport` is passed, the system default `.md` handler is used instead
 
 ---
 
