@@ -205,3 +205,116 @@ function Get-NLSExchangePolicies {
 }
 
 Export-ModuleMember -Function Get-NLSExchangePolicies
+
+function Get-NLSDMARCStatus {
+    <#
+    .SYNOPSIS
+        Checks DMARC policy state for all accepted domains via DNS lookup.
+        Completes the email authentication picture alongside DKIM and DNSSEC.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
+        $dmarcResults    = foreach ($domain in $acceptedDomains) {
+            try {
+                $dnsResult = Resolve-DnsName -Name "_dmarc.$($domain.DomainName)" -Type TXT -ErrorAction Stop
+                $dmarcRecord = $dnsResult | Where-Object { $_.Strings -match 'v=DMARC1' } |
+                    Select-Object -ExpandProperty Strings -First 1
+
+                if ($dmarcRecord) {
+                    $policy = if ($dmarcRecord -match 'p=([a-z]+)') { $Matches[1] } else { 'unknown' }
+                    $pct    = if ($dmarcRecord -match 'pct=([0-9]+)') { [int]$Matches[1] } else { 100 }
+                    [ordered]@{
+                        Domain   = $domain.DomainName
+                        HasDMARC = $true
+                        Policy   = $policy
+                        Pct      = $pct
+                        Enforced = ($policy -eq 'reject')
+                        Partial  = ($policy -eq 'quarantine')
+                        Record   = $dmarcRecord
+                    }
+                } else {
+                    [ordered]@{
+                        Domain   = $domain.DomainName
+                        HasDMARC = $false
+                        Policy   = 'none'
+                        Pct      = 0
+                        Enforced = $false
+                        Partial  = $false
+                        Record   = $null
+                    }
+                }
+            } catch {
+                [ordered]@{
+                    Domain   = $domain.DomainName
+                    HasDMARC = $false
+                    Policy   = 'missing'
+                    Pct      = 0
+                    Enforced = $false
+                    Partial  = $false
+                    Record   = $null
+                }
+            }
+        }
+
+        $results['DMARC'] = [ordered]@{
+            Domains          = @($dmarcResults)
+            EnforcedCount    = ($dmarcResults | Where-Object { $_.Enforced }).Count
+            QuarantineCount  = ($dmarcResults | Where-Object { $_.Partial }).Count
+            MissingCount     = ($dmarcResults | Where-Object { -not $_.HasDMARC }).Count
+            NoneCount        = ($dmarcResults | Where-Object { $_.Policy -eq 'none' }).Count
+        }
+
+        Register-NLSCoverage -ControlFamily 'DMARC' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSDMARCStatus' -Message 'Failed to check DMARC status' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'DMARC' -Status 'Partial' -Reason $_.Exception.Message
+        $results['DMARC'] = $null
+    }
+
+    return $results
+}
+
+function Get-NLSSharedMailboxHardening {
+    <#
+    .SYNOPSIS
+        Checks shared mailboxes for interactive sign-in enabled and unnecessary licenses.
+        Shared mailboxes with interactive sign-in are an unmonitored access vector.
+    #>
+    param([bool]$Redact = $false)
+
+    $results = [ordered]@{}
+
+    try {
+        $sharedMailboxes = Get-Mailbox -RecipientTypeDetails SharedMailbox -ResultSize Unlimited -ErrorAction Stop
+        $casShared       = Get-CasMailbox -ResultSize Unlimited -ErrorAction Stop |
+            Where-Object { $sharedMailboxes.PrimarySmtpAddress -contains $_.PrimarySmtpAddress }
+
+        $signInEnabled = @($sharedMailboxes | Where-Object { $_.AccountDisabled -eq $false })
+        $popEnabled    = @($casShared | Where-Object { $_.PopEnabled })
+        $imapEnabled   = @($casShared | Where-Object { $_.ImapEnabled })
+
+        $results['SharedMailboxHardening'] = [ordered]@{
+            TotalSharedMailboxes    = $sharedMailboxes.Count
+            SignInEnabledCount      = $signInEnabled.Count
+            PopEnabledCount         = $popEnabled.Count
+            ImapEnabledCount        = $imapEnabled.Count
+            SignInEnabledList       = if ($signInEnabled.Count -gt 0) {
+                @($signInEnabled | ForEach-Object { if ($Redact) { '[REDACTED]' } else { $_.PrimarySmtpAddress } })
+            } else { @() }
+        }
+
+        Register-NLSCoverage -ControlFamily 'SharedMailboxHardening' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSSharedMailboxHardening' -Message 'Failed to retrieve shared mailbox config' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'SharedMailboxHardening' -Status 'Partial' -Reason $_.Exception.Message
+        $results['SharedMailboxHardening'] = $null
+    }
+
+    return $results
+}
+
+Export-ModuleMember -Function Get-NLSExchangePolicies, Get-NLSDMARCStatus, Get-NLSSharedMailboxHardening
