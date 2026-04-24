@@ -13,7 +13,7 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?style=flat-square)](https://github.com/PowerShell/PowerShell)
 [![Read Only](https://img.shields.io/badge/Mode-Read--Only-00c853?style=flat-square)]()
 [![Frameworks](https://img.shields.io/badge/Frameworks-NIST%20%7C%20CIS%20%7C%20HIPAA%20%7C%20ZeroTrust-orange?style=flat-square)]()
-[![Version](https://img.shields.io/badge/Version-2.1.0-white?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-2.2.0-white?style=flat-square)]()
 
 ---
 
@@ -25,26 +25,25 @@
 | Remediation script | Auto-generated per-tenant PowerShell remediation script every run |
 | Delta reporting | Compares current run against previous — surfaces improved, regressed, new |
 | Portfolio summary | `Invoke-NLSSummary.ps1` — cross-tenant view ranked by risk score |
+| Live DNS lookup | SPF, DMARC, DKIM record verification per domain (`-DNSRecords`) |
+| SHA-256 module integrity | Hash manifest prevents in-place file tampering (`-GenerateManifest`) |
+| Token cache clear | `-ClearToken` fixes stale Graph token scope issues |
+| Command injection hardening | Identity variables sanitized in generated remediation scripts |
+| Redaction hardening | IPv6, tenant URLs, and display names redacted when `-RedactSensitiveData` |
 | Granular finding detail | Affected object lists on every count-based finding |
 | Current state vs recommended | Structured comparison table per finding |
 | Per-framework recommendation blocks | Each framework gets its own section with control name, detail, and requirement level |
-| Flags used in report | Metadata shows exactly which frameworks and features were active |
 | CA policy inventory | Full policy table with state, MFA, legacy auth, device compliance |
-| Recommended CA policies | Missing policy detection against CIS M365 Benchmark |
 | User MFA gap analysis | Per-user MFA registration status with admin flagging (`-MFAReport`) |
 | Secure Score integration | Current score, top gaps, per-control improvement opportunities (`-SecureScore`) |
-| Zero Trust flag | CISA Zero Trust Maturity Model mapping (`-ZeroTrust`) |
-| Auto-open report | Reports open in VS Code automatically if installed |
-| Legacy auth telemetry | Accounts with active legacy auth attempts surfaced by name |
-| DMARC policy check | DMARC policy state per domain via DNS (`-DMARC`) |
 | Admin role inventory | Global Admin count, over-privilege detection (`-AdminRoles`) |
 | Stale account detection | Accounts inactive 90+ days with last sign-in (`-StaleAccounts`) |
 | Guest account inventory | External guest accounts with stale detection (`-GuestInventory`) |
 | Named location check | Zero Trust gap warning if no named locations defined (`-NamedLocations`) |
-| Service principal inventory | High-privilege app detection (`-ServicePrincipals`) |
+| Service principal inventory | High-privilege app detection, Microsoft first-party excluded (`-ServicePrincipals`) |
 | Shared mailbox hardening | Interactive sign-in and legacy protocol check (`-SharedMailboxes`) |
+| Auto-open report | Reports open in VS Code automatically if installed |
 | Custom help output | `.\Invoke-NLSAssessment.ps1 --help` |
-| Security hardening | UPN input validation, module integrity check, output path locking, exceptions redaction fix |
 
 ---
 
@@ -72,16 +71,17 @@ Run `Invoke-NLSSummary.ps1` after assessing multiple tenants to get a portfolio-
 - Outbound spam notification
 - Defender for Office 365 (Safe Attachments, Safe Links, Anti-Phishing, ZAP, ATP)
 - DKIM signing configuration per domain — with disabled domain list
-- DNSSEC status per domain — with disabled domain list
+- DNSSEC status per domain — EXO check with live DNS fallback
 
 ### Exchange Online (Optional Flags)
 - DMARC policy state per domain via DNS (`-DMARC`)
+- Live DNS record lookup — SPF, DMARC, DKIM published values (`-DNSRecords`)
 - Shared mailbox hardening — interactive sign-in and legacy protocols (`-SharedMailboxes`)
 
 ### Conditional Access (Microsoft Graph — Standard)
 - Full CA policy inventory — state, MFA grant, legacy auth block, device compliance
 - Missing recommended policy detection
-- MFA enforcement as a grant control
+- MFA enforcement via BuiltInControls and AuthenticationStrength
 - Legacy authentication blocking
 - Report-only policy detection
 - Sign-in log telemetry — legacy auth attempts by account, MFA challenge rate, failures
@@ -93,7 +93,7 @@ Run `Invoke-NLSSummary.ps1` after assessing multiple tenants to get a portfolio-
 - Stale accounts inactive 90+ days (`-StaleAccounts`)
 - External guest account inventory (`-GuestInventory`)
 - Named location definition check (`-NamedLocations`)
-- High-privilege service principal inventory (`-ServicePrincipals`)
+- High-privilege service principal inventory, Microsoft first-party excluded (`-ServicePrincipals`)
 
 ---
 
@@ -134,17 +134,15 @@ Profiles are predefined bundles of framework and feature flags. Use `-P` instead
 | Quick | `-P Quick` | NIST | Exchange only, no Graph — fastest triage |
 | Standard | `-P Standard` | NIST, CIS | Full Graph — general purpose assessment |
 | HIPAA | `-P HIPAA` | HIPAA, HIPAAProposed | MFAReport, AdminRoles, DMARC, SharedMailboxes |
-| MSP | `-P MSP` | NIST, CIS | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes |
+| MSP | `-P MSP` | NIST, CIS | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes, DNSRecords |
 | ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts |
 | Full | `-P Full` | All frameworks | All features |
-
-Profiles are additive — extra flags passed alongside `-P` expand the profile.
 
 ### Why Profiles
 
 Before:
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport -AdminRoles -StaleAccounts -GuestInventory -NamedLocations -ServicePrincipals -DMARC -SharedMailboxes
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport -AdminRoles -StaleAccounts -GuestInventory -NamedLocations -ServicePrincipals -DMARC -SharedMailboxes -DNSRecords
 ```
 
 After:
@@ -162,46 +160,38 @@ After:
 .\Invoke-NLSAssessment.ps1 --help
 ```
 
-Displays branded help with the full profile table, all flags, examples, permissions, and troubleshooting.
-
 ### Profile Examples
 
 ```powershell
 # Quick triage -- Exchange only, no Graph
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick
 
-# General purpose assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Standard
-
 # MSP tenant assessment
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
 
-# Healthcare client -- dual-state HIPAA, redacted output
+# Healthcare client -- dual-state HIPAA, redacted
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData
-
-# Zero Trust posture assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P ZeroTrust
 
 # Full assessment -- everything, redacted
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData
 
 # Profile expanded with extra flag
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore -OpenReport
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore
 ```
 
-### Manual Flags (No Profile)
+### Token Issues
+
+If CA or Named Locations shows `[AccessDenied]` use `-ClearToken` to force fresh consent:
 
 ```powershell
-# NIST + CIS with DMARC only
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -DMARC
-
-# Exchange only, HIPAA dual-state, redacted
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NoGraph -HIPAA -HIPAAProposed -RedactSensitiveData
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -ClearToken
 ```
+
+Only needed when scopes are stale or after a tool update that adds new Graph scopes.
 
 ### Delta Comparison
 
-Delta runs automatically when a previous report exists for the same tenant in the output folder. To manually specify a previous report:
+Delta runs automatically when a previous report exists for the same tenant. Manual override:
 
 ```powershell
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -Compare ".\output\ndaco-20260301.md"
@@ -209,23 +199,56 @@ Delta runs automatically when a previous report exists for the same tenant in th
 
 ### Portfolio Summary
 
-Run after completing assessments across multiple tenants:
-
 ```powershell
 .\Invoke-NLSSummary.ps1
 ```
 
-Reads all reports in `output\`, ranks tenants by risk score, produces `NLS-Portfolio-<date>.md` and opens it in VS Code.
-
 ### Navigate to Tool Directory
 
 ```powershell
-# Option 1 -- PowerShell shorthand
 cd ~\Downloads\NLS-Assessment
-
-# Option 2 -- Right-click folder in File Explorer
-# Select "Open in Terminal" -- opens PowerShell 7 in the correct directory
+# or right-click folder > Open in Terminal
 ```
+
+---
+
+## Security
+
+### Module Integrity
+
+Every run verifies all NLS modules against a SHA-256 hash manifest. If any module has been modified since the manifest was generated, the tool aborts with `MODULE INTEGRITY VIOLATION DETECTED`.
+
+This prevents two attack vectors:
+- **Path injection** — a malicious `.psm1` planted in a different directory
+- **In-place tampering** — a legitimate module file modified on disk
+
+### First Run — Generate Hash Manifest
+
+After downloading or updating the tool, generate the baseline hash manifest before running any assessments:
+
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
+```
+
+This writes `Modules\modules.sha256` and exits. The manifest must match all module files before any assessment will run.
+
+### Update Procedure
+
+Any time you replace a module file you must regenerate the manifest:
+
+```powershell
+# Step 1 -- replace module files
+# Step 2 -- regenerate manifest
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
+# Step 3 -- run assessment
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full
+```
+
+### Output Security
+
+- Output directory permissions locked to current user on creation
+- `-RedactSensitiveData` scrubs UPNs, GUIDs, IPv4, IPv6, and tenant URLs from all output including the exceptions log
+- Remediation scripts sanitize identity variables to prevent command injection
 
 ---
 
@@ -245,7 +268,7 @@ Reports open automatically in VS Code after each run if VS Code is installed.
 
 ### Remediation Script
 
-The remediation script is scoped to exactly what was found in the assessment. It includes safety controls, confirmation prompts, and inline framework citations.
+The remediation script is scoped to exactly what was found. Includes safety controls, WhatIf support, and framework citations.
 
 ```powershell
 # Preview changes without applying
@@ -258,49 +281,7 @@ The remediation script is scoped to exactly what was found in the assessment. It
 .\ndaco-20260424-remediation.ps1 -UserPrincipalName admin@ndaco.org -Force
 ```
 
-**Always review the remediation script before running.** Controls that require portal action (CA policies, Safe Links) are flagged with portal links rather than commands.
-
-### Delta Report
-
-When a previous report exists for the same tenant, the report includes a delta section:
-
-```markdown
-## Delta Report
-
-Comparison against previous report: ndaco-20260301.md
-
-| Category    | Count |
-|-------------|:-----:|
-| Improved    | 4     |
-| Regressed   | 1     |
-| Unchanged   | 12    |
-| New Findings| 0     |
-
-### Improved
-| Control                              | Previous | Current   |
-|--------------------------------------|:--------:|:---------:|
-| Disable SMTP client authentication   | Gap      | Satisfied |
-| Disable POP3 on all mailboxes        | Gap      | Satisfied |
-
-### Regressed
-> **Action required. Controls that previously passed have regressed.**
-
-| Control                | Previous  | Current |
-|------------------------|:---------:|:-------:|
-| Enable outbound spam   | Satisfied | Gap     |
-```
-
-### Portfolio Summary
-
-```markdown
-## Tenant Rankings
-
-| Rank | Tenant     | Risk Score | Gap | Partial | Satisfied | Total | Last Assessment |
-|:----:|------------|:----------:|:---:|:-------:|:---------:|:-----:|-----------------|
-| 1    | NDACO      | 🔴 20      | 10  | 2       | 8         | 20    | 2026-04-24      |
-| 2    | DUNNCOUNTY | 🟡 8       | 4   | 3       | 3         | 10    | 2026-04-24      |
-| 3    | CORNERPOST | 🟢 4       | 2   | 2       | 9         | 13    | 2026-04-24      |
-```
+Always review the remediation script before running. Outbound spam notification requires updating the recipient address before executing.
 
 ### Report Sections (in order)
 
@@ -315,10 +296,11 @@ Comparison against previous report: ndaco-20260301.md
 9. **Guest Account Inventory** — external guests with stale detection (if `-GuestInventory`)
 10. **Named Locations** — Zero Trust gap warning if none defined (if `-NamedLocations`)
 11. **Service Principal Inventory** — high-privilege app detection (if `-ServicePrincipals`)
-12. **DMARC Policy Status** — policy state per domain (if `-DMARC`)
-13. **Shared Mailbox Hardening** — interactive sign-in and legacy protocol exposure (if `-SharedMailboxes`)
-14. **Conditional Access Policy Inventory** — full policy table and missing policy checklist
-15. **Findings** — grouped by severity and category with full v2 detail
+12. **DNS Email Record Verification** — live SPF, DMARC, DKIM values per domain (if `-DNSRecords`)
+13. **DMARC Policy Status** — policy state per domain (if `-DMARC`)
+14. **Shared Mailbox Hardening** — interactive sign-in and legacy protocol exposure (if `-SharedMailboxes`)
+15. **Conditional Access Policy Inventory** — full policy table and missing policy checklist
+16. **Findings** — grouped by severity and category with full v2 detail
 
 ---
 
@@ -331,44 +313,36 @@ NLS-Assessment/
 |-- Invoke-NLSSummary.ps1              # Portfolio summary across all tenants
 |
 |-- Modules/
-|   |-- NLS.Core.psm1                  # Output safety, coverage, exceptions, security controls
-|   |-- NLS.Exchange.psm1              # Exchange Online + DMARC + shared mailbox collectors
+|   |-- NLS.Core.psm1                  # Output safety, redaction, integrity, security controls
+|   |-- NLS.Exchange.psm1              # Exchange Online + DMARC + DNS + shared mailbox
 |   |-- NLS.ConditionalAccess.psm1     # Graph CA, telemetry, MFA, Secure Score, inventory
 |   |-- NLS.FrameworkDictionary.psm1   # 228 state-aware compliance citations (data only)
-|   |-- NLS.Scoring.psm1               # Scoring engine with affected objects and state comparison
+|   |-- NLS.Scoring.psm1               # Scoring engine with dedup and state comparison
 |   |-- NLS.Reporting.psm1             # Markdown report with all v2 sections
 |   |-- NLS.Remediation.psm1           # Remediation script generator
-|   `-- NLS.Delta.psm1                 # Delta comparison and reporting
+|   |-- NLS.Delta.psm1                 # Delta comparison and reporting
+|   `-- modules.sha256                 # SHA-256 hash manifest (generated, not committed)
 |
 |-- output/
 |   |-- ndaco-20260424.md
 |   |-- ndaco-20260424-remediation.ps1
 |   |-- ndaco-20260424-exceptions.md
-|   |-- dunncounty-20260424.md
-|   |-- dunncounty-20260424-remediation.ps1
 |   `-- NLS-Portfolio-20260424.md
 |
 |-- README.md
 `-- .gitignore
 ```
 
-### Data and Logic Separation
-
-`NLS.FrameworkDictionary.psm1` contains only compliance mapping data. When a framework releases a new version, only this file changes.
-
-Update procedure:
-1. Open `NLS.FrameworkDictionary.psm1`
-2. Find affected ControlId entries
-3. Update Citation, Detail, and Requirement fields
-4. Update `DictionaryVersion` at bottom of file
-5. Commit and tag release
-
 ### Security Controls in NLS.Core
 
-- `Test-NLSInputUPN` — validates UPN format before passing to connection cmdlets
-- `Test-NLSModuleIntegrity` — verifies all NLS modules loaded from expected path, aborts on violation
-- `Protect-NLSOutputPath` — locks output directory permissions to current user
-- `Protect-NLSExceptionsRedaction` — applies full redaction to exceptions log when `-RedactSensitiveData` is passed
+| Function | Purpose |
+|---|---|
+| `Test-NLSInputUPN` | Validates UPN format before passing to connection cmdlets |
+| `Test-NLSModuleIntegrity` | Path check + SHA-256 hash check against manifest |
+| `New-NLSModuleHashManifest` | Generates baseline hash manifest |
+| `Protect-NLSOutputPath` | Locks output directory permissions to current user |
+| `Invoke-NLSRedaction` | Central redaction — UPNs, GUIDs, IPv4, IPv6, tenant URLs |
+| `Protect-NLSExceptionsRedaction` | Applies central redaction to exceptions log |
 
 ---
 
@@ -395,7 +369,8 @@ Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
 |---|---|
 | Exchange Admin or Global Admin | Exchange Online collection |
 | `Policy.Read.ConditionalAccess` | CA policy collection |
-| `Directory.Read.All` | Graph directory access, admin roles, guest inventory, service principals |
+| `Policy.Read.All` | Named Locations |
+| `Directory.Read.All` | Admin roles, guest inventory, service principals |
 | `AuditLog.Read.All` | Sign-in log telemetry, stale accounts |
 | `Reports.Read.All` | User MFA registration status (`-MFAReport`) |
 | `SecurityEvents.Read.All` | Secure Score (`-SecureScore`) |
@@ -410,13 +385,60 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ## First Run Setup
 
-Files downloaded from GitHub are marked untrusted by Windows. Run once after downloading:
+Complete these steps in order. Run from PowerShell 7 — not Windows PowerShell.
+
+### 1. Install PowerShell 7
+
+```powershell
+winget install Microsoft.PowerShell
+```
+
+Close and reopen. Confirm the title bar shows `pwsh`.
+
+### 2. Install modules
+
+```powershell
+Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force
+Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
+```
+
+### 3. Set execution policy
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+### 4. Navigate to tool folder
+
+```powershell
+cd ~\Downloads\NLS-Assessment
+```
+
+Or right-click the folder in File Explorer and select **Open in Terminal**.
+
+### 5. Unblock downloaded files
 
 ```powershell
 Unblock-File -Path .\Invoke-NLSAssessment.ps1
 Unblock-File -Path .\Invoke-NLSSummary.ps1
 Unblock-File -Path .\Modules\*.psm1
 ```
+
+### 6. Generate hash manifest
+
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
+```
+
+This establishes the security baseline. Required before any assessment will run.
+
+### 7. Run first assessment
+
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick
+```
+
+Quick profile — Exchange only, no Graph. Verify the tool loads and connects before running Full.
 
 ---
 
@@ -429,8 +451,6 @@ Unblock-File -Path .\Modules\*.psm1
 | NotCollected | Operator did not pass the required flag |
 | Unsupported | Tenant licensing does not support this control |
 
-**Licensing gap notice:** When controls return Partial due to missing licenses (e.g. Defender for Office 365 cmdlets not found), the report includes a licensing note. This is a licensing issue, not a security finding.
-
 ---
 
 ## Operational Notes
@@ -438,12 +458,13 @@ Unblock-File -Path .\Modules\*.psm1
 - Always run from a dedicated admin account
 - Use `-RedactSensitiveData` for any artifacts leaving your workstation
 - The `output\` directory is gitignored — do not commit assessment artifacts
+- `modules.sha256` is gitignored — each operator generates their own baseline
 - Run from PowerShell 7 — Windows PowerShell 5.1 is not supported
 - First Graph run against a new tenant prompts for browser consent
 - Extended inventory flags add significant collection time on large tenants
 - Reports open automatically in VS Code after each run if VS Code is installed
-- Remediation scripts are generated every run — review before executing
-- Run `Invoke-NLSSummary.ps1` after assessing multiple tenants for the portfolio view
+- Remediation scripts are generated every run — always review before executing
+- After replacing any module file, run `-GenerateManifest` before next assessment
 
 ---
 
@@ -472,9 +493,33 @@ Unblock-File -Path .\Modules\*.psm1
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-Get-ExecutionPolicy -Scope CurrentUser
-# Should return: RemoteSigned
 ```
+
+### Module integrity violation
+
+Symptom: `MODULE INTEGRITY VIOLATION DETECTED`
+
+Cause: A module file has changed since the manifest was last generated. This fires after every module update — it is expected and correct behavior.
+
+Fix:
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
+```
+
+If the violation was not caused by a legitimate update, re-download the repo and inspect what changed.
+
+### Conditional Access or Named Locations returns Partial (AccessDenied)
+
+Symptom: `ConditionalAccess | Partial | [AccessDenied] : required scopes are missing in the token`
+
+Cause: Stale cached Graph token missing one or more required scopes. Global Admin does not override a cached token.
+
+Fix:
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -ClearToken
+```
+
+`-ClearToken` wipes the WAM token cache and forces a fresh consent flow. Accept all permissions when the browser opens.
 
 ### Graph module assembly conflict
 
@@ -484,29 +529,7 @@ Symptom: `Could not load file or assembly 'Microsoft.Graph.Authentication'`
 Install-Module Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
 ```
 
-Close PowerShell and reopen in a fresh PowerShell 7 session.
-
-### Conditional Access returns Partial
-
-Symptom: `ConditionalAccess | Partial | One or more errors occurred`
-
-```powershell
-Get-Command Get-MgIdentityConditionalAccessPolicy -ErrorAction SilentlyContinue
-Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
-```
-
-### Conditional Access Partial on Global Admin Account
-
-Symptom: `ConditionalAccess | Partial | [AccessDenied] : required scopes are missing in the token`
-
-Cause: Stale cached Graph token missing `Policy.Read.ConditionalAccess`. Global Admin does not override a cached token.
-
-```powershell
-Disconnect-MgGraph -ErrorAction SilentlyContinue
-Remove-Item -Path "$env:USERPROFILE\.mg" -Recurse -Force -ErrorAction SilentlyContinue
-```
-
-Rerun — browser will prompt for fresh consent. Accept all permissions.
+Close and reopen PowerShell 7.
 
 ### Defender for Office 365 Cmdlets Not Found
 
@@ -517,20 +540,15 @@ Cause: Tenant does not have Defender for Office 365 Plan 1 or Plan 2. Required l
 - Microsoft Defender for Office 365 Plan 1 or Plan 2
 - Microsoft 365 E3/E5
 
-This is a licensing gap, not a security finding.
+This is a licensing gap, not a security finding. All other controls still assess correctly.
 
 ### MFA Report returns Partial
 
-Requires `Reports.Read.All`. Disconnect and reconnect:
+Requires `Reports.Read.All`. Use `-ClearToken` to force scope re-consent:
 
 ```powershell
-Disconnect-MgGraph
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -MFAReport
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -ClearToken
 ```
-
-### Secure Score returns Partial
-
-Requires `SecurityEvents.Read.All`. Disconnect and reconnect to force re-consent.
 
 ### Device compliance blocking Graph consent
 
@@ -538,24 +556,15 @@ Symptom: `AADSTS53000: Device is not in required device state`
 
 Options:
 - Run from a compliant enrolled device
-- Use `-NoGraph` to skip Graph and run Exchange checks only
+- Use `-NoGraph` for Exchange-only checks
 - Exclude the admin account from the device compliance CA policy in Entra ID
 
 ### Portfolio summary shows no reports
 
-Symptom: `No tenant reports found in: .\output`
-
-Run at least one assessment first:
 ```powershell
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
 .\Invoke-NLSSummary.ps1
 ```
-
-### Module integrity violation
-
-Symptom: `MODULE INTEGRITY VIOLATION DETECTED`
-
-A module loaded from an unexpected path. Verify the `Modules\` directory and re-download from the repo.
 
 ---
 
@@ -563,6 +572,7 @@ A module loaded from an unexpected path. Verify the `Modules\` directory and re-
 
 | Version | Date | Notes |
 |---|---|---|
+| 2.2.0 | 2026-04-24 | SHA-256 integrity, -ClearToken, -GenerateManifest, DNS records, injection hardening, redaction hardening |
 | 2.1.0 | 2026-04-24 | Delta reporting, remediation script generator, portfolio summary |
 | 2.0.0 | 2026-04-24 | Full v2 build — profiles, all features, security hardening, extended inventory |
 | 1.0.0 | 2026-04-24 | Initial release — public repo nextlayersec-assessment |
