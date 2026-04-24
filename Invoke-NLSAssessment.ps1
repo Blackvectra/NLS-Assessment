@@ -136,6 +136,27 @@ param (
 
     [Parameter(Mandatory = $false)]
     [switch]$OpenReport,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$AdminRoles,        # Admin role inventory and over-privilege detection
+
+    [Parameter(Mandatory = $false)]
+    [switch]$StaleAccounts,     # Accounts inactive 90+ days
+
+    [Parameter(Mandatory = $false)]
+    [switch]$GuestInventory,    # External guest account inventory
+
+    [Parameter(Mandatory = $false)]
+    [switch]$NamedLocations,    # Named location definition check
+
+    [Parameter(Mandatory = $false)]
+    [switch]$ServicePrincipals, # High-privilege service principal inventory
+
+    [Parameter(Mandatory = $false)]
+    [switch]$DMARC,             # DMARC policy state per domain
+
+    [Parameter(Mandatory = $false)]
+    [switch]$SharedMailboxes,   # Shared mailbox hardening check
     # ─────────────────────────────────────────────────────────
 
     [Parameter(Mandatory = $false)]
@@ -248,8 +269,15 @@ Write-Host ''
 $runTelemetry  = -not ($Quick -or $NoTelemetry -or $NoGraph)
 $runGraph      = -not $NoGraph
 $runRedaction  = [bool]$RedactSensitiveData
-$runSecScore   = [bool]$SecureScore -and $runGraph
-$runMFAReport  = [bool]$MFAReport -and $runGraph
+$runSecScore          = [bool]$SecureScore -and $runGraph
+$runMFAReport         = [bool]$MFAReport -and $runGraph
+$runAdminRoles        = [bool]$AdminRoles -and $runGraph
+$runStaleAccounts     = [bool]$StaleAccounts -and $runGraph
+$runGuestInventory    = [bool]$GuestInventory -and $runGraph
+$runNamedLocations    = [bool]$NamedLocations -and $runGraph
+$runServicePrincipals = [bool]$ServicePrincipals -and $runGraph
+$runDMARC             = [bool]$DMARC
+$runSharedMailboxes   = [bool]$SharedMailboxes
 
 Write-Host '[*] Execution Mode: ' -NoNewline -ForegroundColor Cyan
 if ($NoGraph) {
@@ -277,8 +305,15 @@ Write-Host ($activeFrameworks -join ', ') -ForegroundColor White
 
 Write-Host '[*] Features: ' -NoNewline -ForegroundColor Cyan
 $activeFeatures = @()
-if ($runSecScore)  { $activeFeatures += 'Secure Score' }
-if ($runMFAReport) { $activeFeatures += 'MFA Report' }
+if ($runSecScore)          { $activeFeatures += 'Secure Score' }
+if ($runMFAReport)         { $activeFeatures += 'MFA Report' }
+if ($runAdminRoles)        { $activeFeatures += 'Admin Roles' }
+if ($runStaleAccounts)     { $activeFeatures += 'Stale Accounts' }
+if ($runGuestInventory)    { $activeFeatures += 'Guest Inventory' }
+if ($runNamedLocations)    { $activeFeatures += 'Named Locations' }
+if ($runServicePrincipals) { $activeFeatures += 'Service Principals' }
+if ($runDMARC)             { $activeFeatures += 'DMARC' }
+if ($runSharedMailboxes)   { $activeFeatures += 'Shared Mailboxes' }
 if ($activeFeatures.Count -gt 0) {
     Write-Host ($activeFeatures -join ', ') -ForegroundColor White
 } else {
@@ -343,6 +378,18 @@ foreach ($mod in $moduleFiles) {
     }
 }
 
+# Module integrity check -- verify all NLS modules loaded from expected path
+$integrityCheck = Test-NLSModuleIntegrity -ExpectedModulesPath $modulesDir
+if (-not $integrityCheck.Passed) {
+    Write-Host '[!] MODULE INTEGRITY VIOLATION DETECTED' -ForegroundColor Red
+    foreach ($v in $integrityCheck.Violations) {
+        Write-Host "    $($v.Module) loaded from unexpected path: $($v.LoadedFrom)" -ForegroundColor Red
+    }
+    Write-Host '    Aborting. Verify Modules directory has not been tampered with.' -ForegroundColor Red
+    exit 1
+}
+Write-Host '  [+] Module integrity verified' -ForegroundColor DarkGray
+
 # ─────────────────────────────────────────────
 # Output Directory Setup
 # ─────────────────────────────────────────────
@@ -352,7 +399,12 @@ $outDir    = Join-Path $scriptDir "output\$timestamp"
 
 try {
     New-Item -Path $outDir -ItemType Directory -Force | Out-Null
-    Write-Host "  [+] Output directory: $outDir" -ForegroundColor DarkGray
+    $pathProtected = Protect-NLSOutputPath -OutputPath $outDir
+    if ($pathProtected) {
+        Write-Host "  [+] Output directory: $outDir (permissions locked)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  [+] Output directory: $outDir" -ForegroundColor DarkGray
+    }
 } catch {
     Write-Host "[!] Failed to create output directory: $_" -ForegroundColor Red
     exit 1
@@ -364,6 +416,13 @@ try {
 
 if (-not $SkipConnect) {
     $upn = if ($UserPrincipalName) { $UserPrincipalName } else { Read-Host 'Enter Admin UPN' }
+
+    # Validate UPN format before connecting
+    $upnValidation = Test-NLSInputUPN -UPN $upn
+    if (-not $upnValidation.Valid) {
+        Write-Host "[!] Invalid UPN: $($upnValidation.Reason)" -ForegroundColor Red
+        exit 1
+    }
 
     Write-Host ''
     Write-Host '[-] Establishing read-only connections...' -ForegroundColor DarkGray
@@ -406,10 +465,35 @@ Write-Host ''
 Write-Host '[-] Collecting Exchange Online policies...' -ForegroundColor DarkGray
 $exchangeResults = Get-NLSExchangePolicies -Redact $runRedaction
 
-$caResults          = @{}
-$caTelemetryResults = @{}
-$mfaStatusResults   = @{}
-$secureScoreResults = @{}
+if ($runDMARC) {
+    Write-Host '[-] Collecting DMARC policy status...' -ForegroundColor DarkGray
+    $dmarcResults = Get-NLSDMARCStatus -Redact $runRedaction
+} else {
+    Register-NLSCoverage -ControlFamily 'DMARC' `
+        -Status 'NotCollected' -Reason 'Operator did not pass -DMARC flag'
+    $dmarcResults = @{}
+}
+
+if ($runSharedMailboxes) {
+    Write-Host '[-] Collecting shared mailbox hardening status...' -ForegroundColor DarkGray
+    $sharedMailboxResults = Get-NLSSharedMailboxHardening -Redact $runRedaction
+} else {
+    Register-NLSCoverage -ControlFamily 'SharedMailboxHardening' `
+        -Status 'NotCollected' -Reason 'Operator did not pass -SharedMailboxes flag'
+    $sharedMailboxResults = @{}
+}
+
+$caResults                = @{}
+$caTelemetryResults       = @{}
+$mfaStatusResults         = @{}
+$secureScoreResults       = @{}
+$adminRoleResults         = @{}
+$staleAccountResults      = @{}
+$guestResults             = @{}
+$namedLocationResults     = @{}
+$servicePrincipalResults  = @{}
+$dmarcResults             = @{}
+$sharedMailboxResults     = @{}
 
 if ($runGraph) {
     Write-Host '[-] Collecting Conditional Access policies...' -ForegroundColor DarkGray
@@ -438,6 +522,46 @@ if ($runGraph) {
     } else {
         Register-NLSCoverage -ControlFamily 'SecureScore' `
             -Status 'NotCollected' -Reason 'Operator did not pass -SecureScore flag'
+    }
+
+    if ($runAdminRoles) {
+        Write-Host '[-] Collecting admin role inventory...' -ForegroundColor DarkGray
+        $adminRoleResults = Get-NLSAdminRoleInventory -Redact $runRedaction
+    } else {
+        Register-NLSCoverage -ControlFamily 'AdminRoleInventory' `
+            -Status 'NotCollected' -Reason 'Operator did not pass -AdminRoles flag'
+    }
+
+    if ($runStaleAccounts) {
+        Write-Host '[-] Collecting stale account data...' -ForegroundColor DarkGray
+        $staleAccountResults = Get-NLSStaleAccounts -Redact $runRedaction
+    } else {
+        Register-NLSCoverage -ControlFamily 'StaleAccounts' `
+            -Status 'NotCollected' -Reason 'Operator did not pass -StaleAccounts flag'
+    }
+
+    if ($runGuestInventory) {
+        Write-Host '[-] Collecting guest account inventory...' -ForegroundColor DarkGray
+        $guestResults = Get-NLSGuestAccountInventory -Redact $runRedaction
+    } else {
+        Register-NLSCoverage -ControlFamily 'GuestAccountInventory' `
+            -Status 'NotCollected' -Reason 'Operator did not pass -GuestInventory flag'
+    }
+
+    if ($runNamedLocations) {
+        Write-Host '[-] Collecting named locations...' -ForegroundColor DarkGray
+        $namedLocationResults = Get-NLSNamedLocations -Redact $runRedaction
+    } else {
+        Register-NLSCoverage -ControlFamily 'NamedLocations' `
+            -Status 'NotCollected' -Reason 'Operator did not pass -NamedLocations flag'
+    }
+
+    if ($runServicePrincipals) {
+        Write-Host '[-] Collecting service principal inventory...' -ForegroundColor DarkGray
+        $servicePrincipalResults = Get-NLSServicePrincipalInventory -Redact $runRedaction
+    } else {
+        Register-NLSCoverage -ControlFamily 'ServicePrincipalInventory' `
+            -Status 'NotCollected' -Reason 'Operator did not pass -ServicePrincipals flag'
     }
 } else {
     Register-NLSCoverage -ControlFamily 'ConditionalAccess' `
@@ -470,6 +594,8 @@ $allResults = @{
     ExchangePolicies           = $exchangeResults
     ConditionalAccess          = $caResults
     ConditionalAccessTelemetry = $caTelemetryResults
+    DMARC                      = $dmarcResults
+    SharedMailboxes            = $sharedMailboxResults
 }
 
 $scoringParams = @{
@@ -507,15 +633,16 @@ $exceptionsPath = Join-Path $outDir 'Exceptions.md'
 
 # Build extended data for reporting
 $extendedData = @{}
-if ($caResults -and $caResults['ConditionalAccess']) {
-    $extendedData['ConditionalAccess'] = $caResults['ConditionalAccess']
-}
-if ($mfaStatusResults -and $mfaStatusResults['UserMFAStatus']) {
-    $extendedData['UserMFAStatus'] = $mfaStatusResults['UserMFAStatus']
-}
-if ($secureScoreResults -and $secureScoreResults['SecureScore']) {
-    $extendedData['SecureScore'] = $secureScoreResults['SecureScore']
-}
+if ($caResults -and $caResults['ConditionalAccess'])                               { $extendedData['ConditionalAccess']        = $caResults['ConditionalAccess'] }
+if ($mfaStatusResults -and $mfaStatusResults['UserMFAStatus'])                     { $extendedData['UserMFAStatus']            = $mfaStatusResults['UserMFAStatus'] }
+if ($secureScoreResults -and $secureScoreResults['SecureScore'])                   { $extendedData['SecureScore']              = $secureScoreResults['SecureScore'] }
+if ($adminRoleResults -and $adminRoleResults['AdminRoleInventory'])                 { $extendedData['AdminRoleInventory']       = $adminRoleResults['AdminRoleInventory'] }
+if ($staleAccountResults -and $staleAccountResults['StaleAccounts'])               { $extendedData['StaleAccounts']            = $staleAccountResults['StaleAccounts'] }
+if ($guestResults -and $guestResults['GuestAccountInventory'])                     { $extendedData['GuestAccountInventory']    = $guestResults['GuestAccountInventory'] }
+if ($namedLocationResults -and $namedLocationResults['NamedLocations'])            { $extendedData['NamedLocations']           = $namedLocationResults['NamedLocations'] }
+if ($servicePrincipalResults -and $servicePrincipalResults['ServicePrincipalInventory']) { $extendedData['ServicePrincipalInventory'] = $servicePrincipalResults['ServicePrincipalInventory'] }
+if ($dmarcResults -and $dmarcResults['DMARC'])                                     { $extendedData['DMARC']                    = $dmarcResults['DMARC'] }
+if ($sharedMailboxResults -and $sharedMailboxResults['SharedMailboxHardening'])    { $extendedData['SharedMailboxHardening']   = $sharedMailboxResults['SharedMailboxHardening'] }
 
 Publish-NLSAssessmentSummary `
     -ScoredResults $scoredResults `
