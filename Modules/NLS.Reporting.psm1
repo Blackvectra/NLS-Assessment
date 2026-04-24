@@ -156,6 +156,182 @@ function Publish-NLSAssessmentSummary {
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine('')
 
+    # ── Admin Role Inventory ─────────────────────────────────
+    $adminRoles = $ExtendedData['AdminRoleInventory']
+    if ($adminRoles) {
+        [void]$sb.AppendLine('## Admin Role Inventory')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Metric | Value |')
+        [void]$sb.AppendLine('|---|---|')
+        [void]$sb.AppendLine("| Global Admins | $($adminRoles.GlobalAdminCount) |")
+        [void]$sb.AppendLine("| High Privilege Role Assignments | $($adminRoles.HighPrivRoleCount) |")
+        $excessiveFlag = if ($adminRoles.GlobalAdminExcessive) { 'Yes -- review and reduce' } else { 'No' }
+        [void]$sb.AppendLine("| Global Admin Count Excessive (>2) | $excessiveFlag |")
+        [void]$sb.AppendLine('')
+        if ($adminRoles.Roles) {
+            [void]$sb.AppendLine('| Role | Members | High Privilege |')
+            [void]$sb.AppendLine('|---|:---:|:---:|')
+            foreach ($role in ($adminRoles.Roles | Where-Object { $_.MemberCount -gt 0 })) {
+                $highPrivFlag = if ($role.IsHighPriv) { 'Yes' } else { 'No' }
+                [void]$sb.AppendLine("| $($role.RoleName) | $($role.MemberCount) | $highPrivFlag |")
+            }
+            [void]$sb.AppendLine('')
+        }
+        if ($adminRoles.GlobalAdminExcessive) {
+            [void]$sb.AppendLine('> **More than 2 Global Admins detected. Review and reduce to minimum required. Apply least privilege.**')
+            [void]$sb.AppendLine('')
+        }
+        [void]$sb.AppendLine('---')
+        [void]$sb.AppendLine('')
+    }
+
+    # ── Stale Accounts ───────────────────────────────────────
+    $staleData = $ExtendedData['StaleAccounts']
+    if ($staleData) {
+        [void]$sb.AppendLine('## Stale Account Analysis')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine("| Metric | Value |")
+        [void]$sb.AppendLine('|---|---|')
+        [void]$sb.AppendLine("| Threshold | $($staleData.ThresholdDays) days |")
+        [void]$sb.AppendLine("| Total Active Users | $($staleData.TotalActiveUsers) |")
+        [void]$sb.AppendLine("| Inactive $($staleData.ThresholdDays)+ Days | $($staleData.StaleCount) |")
+        [void]$sb.AppendLine("| Never Signed In | $($staleData.NeverSignedInCount) |")
+        [void]$sb.AppendLine('')
+        if ($staleData.StaleList -and $staleData.StaleList.Count -gt 0) {
+            [void]$sb.AppendLine('### Inactive Accounts')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('| User | Last Sign-In |')
+            [void]$sb.AppendLine('|---|---|')
+            foreach ($acct in $staleData.StaleList) {
+                [void]$sb.AppendLine("| $($acct.UPN) | $($acct.LastSignIn) |")
+            }
+            [void]$sb.AppendLine('')
+        }
+        [void]$sb.AppendLine('---')
+        [void]$sb.AppendLine('')
+    }
+
+    # ── Guest Account Inventory ──────────────────────────────
+    $guestData = $ExtendedData['GuestAccountInventory']
+    if ($guestData) {
+        [void]$sb.AppendLine('## Guest Account Inventory')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Metric | Count |')
+        [void]$sb.AppendLine('|---|:---:|')
+        [void]$sb.AppendLine("| Total Guest Accounts | $($guestData.TotalGuests) |")
+        [void]$sb.AppendLine("| Active Guests (signed in) | $($guestData.ActiveGuests) |")
+        [void]$sb.AppendLine("| Stale Guests (90+ days) | $($guestData.StaleGuests) |")
+        [void]$sb.AppendLine('')
+        if ($guestData.GuestList -and $guestData.GuestList.Count -gt 0) {
+            [void]$sb.AppendLine('| Guest UPN | Last Sign-In | State |')
+            [void]$sb.AppendLine('|---|---|---|')
+            foreach ($guest in $guestData.GuestList) {
+                [void]$sb.AppendLine("| $($guest.UPN) | $($guest.LastSignIn) | $($guest.State) |")
+            }
+            [void]$sb.AppendLine('')
+        }
+        [void]$sb.AppendLine('---')
+        [void]$sb.AppendLine('')
+    }
+
+    # ── Named Locations ──────────────────────────────────────
+    $namedLocData = $ExtendedData['NamedLocations']
+    if ($namedLocData) {
+        [void]$sb.AppendLine('## Named Locations')
+        [void]$sb.AppendLine('')
+        if ($namedLocData.TotalDefined -eq 0) {
+            [void]$sb.AppendLine('> **No named locations defined.** Named locations are required for Zero Trust network trust segmentation.')
+            [void]$sb.AppendLine('> Without named locations, Conditional Access policies cannot differentiate corporate network from external access.')
+            [void]$sb.AppendLine('')
+        } else {
+            [void]$sb.AppendLine("| Location | Type | Trusted |")
+            [void]$sb.AppendLine('|---|---|:---:|')
+            foreach ($loc in $namedLocData.Locations) {
+                $trusted = if ($loc.IsTrusted) { 'Yes' } else { 'No' }
+                [void]$sb.AppendLine("| $($loc.DisplayName) | $($loc.Type) | $trusted |")
+            }
+            [void]$sb.AppendLine('')
+        }
+        [void]$sb.AppendLine('---')
+        [void]$sb.AppendLine('')
+    }
+
+    # ── Service Principal Inventory ──────────────────────────
+    $spData = $ExtendedData['ServicePrincipalInventory']
+    if ($spData) {
+        [void]$sb.AppendLine('## Service Principal Inventory')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Metric | Count |')
+        [void]$sb.AppendLine('|---|:---:|')
+        [void]$sb.AppendLine("| Total Service Principals | $($spData.TotalServicePrincipals) |")
+        [void]$sb.AppendLine("| High Privilege Detected | $($spData.HighPrivilegeCount) |")
+        [void]$sb.AppendLine('')
+        if ($spData.HighPrivilegeList -and $spData.HighPrivilegeList.Count -gt 0) {
+            [void]$sb.AppendLine('### High Privilege Service Principals')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('| Display Name | Publisher | App ID |')
+            [void]$sb.AppendLine('|---|---|---|')
+            foreach ($sp in $spData.HighPrivilegeList) {
+                [void]$sb.AppendLine("| $($sp.DisplayName) | $($sp.Publisher) | $($sp.AppId) |")
+            }
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('> **Review high-privilege service principals. Reduce permissions to minimum required.**')
+            [void]$sb.AppendLine('')
+        }
+        [void]$sb.AppendLine('---')
+        [void]$sb.AppendLine('')
+    }
+
+    # ── DMARC Status ─────────────────────────────────────────
+    $dmarcData = $ExtendedData['DMARC']
+    if ($dmarcData) {
+        [void]$sb.AppendLine('## DMARC Policy Status')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Domain | Policy | Pct | Enforced |')
+        [void]$sb.AppendLine('|---|:---:|:---:|:---:|')
+        foreach ($domain in $dmarcData.Domains) {
+            $enforced = if ($domain.Enforced) { 'Yes' } elseif ($domain.Partial) { 'Quarantine' } else { 'No' }
+            [void]$sb.AppendLine("| $($domain.Domain) | $($domain.Policy) | $($domain.Pct)% | $enforced |")
+        }
+        [void]$sb.AppendLine('')
+        if ($dmarcData.MissingCount -gt 0) {
+            [void]$sb.AppendLine("> **$($dmarcData.MissingCount) domain(s) have no DMARC record. Deploy DMARC at p=quarantine then advance to p=reject.**")
+            [void]$sb.AppendLine('')
+        }
+        if ($dmarcData.NoneCount -gt 0) {
+            [void]$sb.AppendLine("> **$($dmarcData.NoneCount) domain(s) have DMARC at p=none (monitoring only). Advance to p=quarantine or p=reject.**")
+            [void]$sb.AppendLine('')
+        }
+        [void]$sb.AppendLine('---')
+        [void]$sb.AppendLine('')
+    }
+
+    # ── Shared Mailbox Hardening ─────────────────────────────
+    $sharedData = $ExtendedData['SharedMailboxHardening']
+    if ($sharedData) {
+        [void]$sb.AppendLine('## Shared Mailbox Hardening')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Metric | Count |')
+        [void]$sb.AppendLine('|---|:---:|')
+        [void]$sb.AppendLine("| Total Shared Mailboxes | $($sharedData.TotalSharedMailboxes) |")
+        [void]$sb.AppendLine("| Interactive Sign-In Enabled | $($sharedData.SignInEnabledCount) |")
+        [void]$sb.AppendLine("| POP3 Enabled | $($sharedData.PopEnabledCount) |")
+        [void]$sb.AppendLine("| IMAP Enabled | $($sharedData.ImapEnabledCount) |")
+        [void]$sb.AppendLine('')
+        if ($sharedData.SignInEnabledList -and $sharedData.SignInEnabledList.Count -gt 0) {
+            [void]$sb.AppendLine('### Shared Mailboxes with Interactive Sign-In Enabled')
+            [void]$sb.AppendLine('')
+            foreach ($mbx in $sharedData.SignInEnabledList) {
+                [void]$sb.AppendLine("  - $mbx")
+            }
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('> **Shared mailboxes should have interactive sign-in disabled. Run Set-MsolUser -UserPrincipalName <mbx> -BlockCredential $true**')
+            [void]$sb.AppendLine('')
+        }
+        [void]$sb.AppendLine('---')
+        [void]$sb.AppendLine('')
+    }
+
     # ── CA Policy Inventory ──────────────────────────────────
     $caData = $ExtendedData['ConditionalAccess']
     if ($caData -and $caData.Policies -and $caData.Policies.Count -gt 0) {
@@ -339,7 +515,13 @@ function Publish-NLSExceptionsList {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('*NextLayerSec -- nextlayersec.io*')
 
-    Export-NLSSafeMarkdown -Content $sb.ToString() -OutPath $OutputPath -Redact $Redact
+    $exceptionsContent = $sb.ToString()
+    # v2 security fix -- apply redaction to exceptions log when requested
+    # Exceptions were previously written without redaction even with -RedactSensitiveData
+    if ($Redact) {
+        $exceptionsContent = Protect-NLSExceptionsRedaction -Content $exceptionsContent
+    }
+    Export-NLSSafeMarkdown -Content $exceptionsContent -OutPath $OutputPath -Redact $false
     Write-Host "  [+] Exceptions list written to: $OutputPath" -ForegroundColor Green
 }
 
