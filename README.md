@@ -39,7 +39,7 @@
 | Named location check | Zero Trust gap warning if no named locations defined (`-NamedLocations`) |
 | Service principal inventory | High-privilege app detection (`-ServicePrincipals`) |
 | Shared mailbox hardening | Interactive sign-in and legacy protocol check (`-SharedMailboxes`) |
-| Assessment profiles | `-Profile Quick/Standard/HIPAA/MSP/ZeroTrust/Full` -- predefined flag bundles |
+| Assessment profiles | `-P Quick/Standard/HIPAA/MSP/ZeroTrust/Full` -- predefined flag bundles |
 | Custom help output | `.\Invoke-NLSAssessment.ps1 --help` |
 | Security hardening | UPN input validation, module integrity check, output path locking, exceptions redaction fix |
 
@@ -246,17 +246,17 @@ Displays branded help output with all flags, examples, permissions, and troubles
 ### Healthcare Client — Use HIPAA Profile
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile HIPAA -RedactSensitiveData
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData
 ```
 ### Full Assessment — Use Profile
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Full -RedactSensitiveData
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData
 ```
 ### MSP Tenant Assessment — Use Profile
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile MSP
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
 ```
 ### Redacted Output
 
@@ -529,47 +529,52 @@ CC BY-ND 4.0 -- See [LICENSE](LICENSE) for details.
 
 Profiles are predefined bundles of framework and feature flags. Use a profile instead of typing long flag lists. Profiles are additive — pass additional flags alongside a profile to expand it.
 
-| Profile | Frameworks | Features Included |
-|---|---|---|
-| `Quick` | NIST | Exchange only, no Graph — fastest triage |
-| `Standard` | NIST, CIS | Full Graph — general purpose assessment |
-| `HIPAA` | HIPAA, HIPAAProposed | MFAReport, AdminRoles, DMARC, SharedMailboxes |
-| `MSP` | NIST, CIS | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes |
-| `ZeroTrust` | NIST, ZeroTrust | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts |
-| `Full` | All frameworks | All features |
+| Profile | Syntax | Frameworks | Features Included |
+|---|---|---|---|
+| Quick | `-P Quick` | NIST | Exchange only, no Graph — fastest triage |
+| Standard | `-P Standard` | NIST, CIS | Full Graph — general purpose assessment |
+| HIPAA | `-P HIPAA` | HIPAA, HIPAAProposed | MFAReport, AdminRoles, DMARC, SharedMailboxes |
+| MSP | `-P MSP` | NIST, CIS | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes |
+| ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts |
+| Full | `-P Full` | All frameworks | All features |
+
+Profiles are additive — pass extra flags alongside `-P` to expand the profile.
 
 ### Profile Examples
 
 ```powershell
 # Quick triage -- Exchange only, no Graph
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Quick
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick
 
 # MSP tenant assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile MSP
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
 
-# Healthcare client -- HIPAA dual-state, redacted output
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile HIPAA -RedactSensitiveData
+# Healthcare client -- HIPAA dual-state, redacted
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData
 
 # Zero Trust posture assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile ZeroTrust
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P ZeroTrust
 
-# Full assessment -- everything
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Full -RedactSensitiveData
+# Full assessment -- everything, redacted
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData
 
-# Profile plus extra flag -- MSP with Secure Score added
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile MSP -SecureScore
+# Profile expanded with extra flag
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore
+
+# Profile expanded with multiple extra flags
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -ZeroTrust -SecureScore -RedactSensitiveData
 ```
 
 The active profile name appears in the report metadata so you always know what produced the output.
 
 ### Why Profiles
 
-Before profiles, a full assessment required:
+Before:
 ```powershell
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport -AdminRoles -StaleAccounts -GuestInventory -NamedLocations -ServicePrincipals -DMARC -SharedMailboxes
 ```
 
-After profiles:
+After:
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Profile Full
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full
 ```
