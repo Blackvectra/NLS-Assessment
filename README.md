@@ -6,7 +6,8 @@
 > HIPAA NPRM proposed rule, and CISA Zero Trust Maturity Model.
 > Produces structured markdown artifacts with granular finding detail,
 > affected object lists, current state vs recommended comparisons,
-> Secure Score integration, and per-user MFA gap analysis.
+> per-framework recommendation blocks, Secure Score integration,
+> per-user MFA gap analysis, and extended tenant security inventory.
 
 [![License](https://img.shields.io/badge/License-CC%20BY--ND%204.0-blue?style=flat-square)](https://creativecommons.org/licenses/by-nd/4.0/)
 [![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?style=flat-square)](https://github.com/PowerShell/PowerShell)
@@ -22,13 +23,24 @@
 |---|---|
 | Granular finding detail | Affected object lists on every count-based finding |
 | Current state vs recommended | Structured comparison table per finding |
+| Per-framework recommendation blocks | Each framework gets its own section with control name, detail, and requirement level |
+| Flags used in report | Metadata shows exactly which frameworks and features were active |
 | CA policy inventory | Full policy table with state, MFA, legacy auth, device compliance |
 | Recommended CA policies | Missing policy detection against CIS M365 Benchmark |
-| User MFA gap analysis | Per-user MFA registration status with admin flagging |
-| Secure Score integration | Current score, top gaps, per-control improvement opportunities |
-| Zero Trust flag | CISA Zero Trust Maturity Model mapping via `-ZeroTrust` |
+| User MFA gap analysis | Per-user MFA registration status with admin flagging (`-MFAReport`) |
+| Secure Score integration | Current score, top gaps, per-control improvement opportunities (`-SecureScore`) |
+| Zero Trust flag | CISA Zero Trust Maturity Model mapping (`-ZeroTrust`) |
 | Auto-open report | `-OpenReport` opens `AssessmentSummary.md` on completion |
 | Legacy auth telemetry | Accounts with active legacy auth attempts surfaced by name |
+| DMARC policy check | DMARC policy state per domain via DNS (`-DMARC`) |
+| Admin role inventory | Global Admin count, over-privilege detection (`-AdminRoles`) |
+| Stale account detection | Accounts inactive 90+ days with last sign-in (`-StaleAccounts`) |
+| Guest account inventory | External guest accounts with stale detection (`-GuestInventory`) |
+| Named location check | Zero Trust gap warning if no named locations defined (`-NamedLocations`) |
+| Service principal inventory | High-privilege app detection (`-ServicePrincipals`) |
+| Shared mailbox hardening | Interactive sign-in and legacy protocol check (`-SharedMailboxes`) |
+| Custom help output | `.\Invoke-NLSAssessment.ps1 --help` |
+| Security hardening | UPN input validation, module integrity check, output path locking, exceptions redaction fix |
 
 ---
 
@@ -38,13 +50,13 @@
 
 **No tenant configuration changes are made at any point.**
 
-Each finding is state-aware — returning Satisfied, Partial, or Gap — with citations mapped to the specific control that requires or recommends the configuration. v2 adds affected object lists, current state vs recommended comparisons, and extended data sections for Secure Score and user MFA status.
+Each finding is state-aware — returning Satisfied, Partial, or Gap — with citations mapped to the specific control that requires or recommends the configuration. v2 adds affected object lists, current state vs recommended comparisons, per-framework recommendation blocks, and extended data sections for tenant security inventory.
 
 ---
 
 ## What It Checks
 
-### Exchange Online
+### Exchange Online (Standard)
 - Legacy authentication policy configuration and org default assignment
 - SMTP client authentication status
 - External auto-forwarding controls
@@ -56,7 +68,11 @@ Each finding is state-aware — returning Satisfied, Partial, or Gap — with ci
 - DKIM signing configuration per domain — with disabled domain list
 - DNSSEC status per domain — with disabled domain list
 
-### Conditional Access (Microsoft Graph)
+### Exchange Online (Optional Flags)
+- DMARC policy state per domain via DNS (`-DMARC`)
+- Shared mailbox hardening — interactive sign-in and legacy protocols (`-SharedMailboxes`)
+
+### Conditional Access (Microsoft Graph — Standard)
 - Full CA policy inventory — state, MFA grant, legacy auth block, device compliance
 - Missing recommended policy detection
 - MFA enforcement as a grant control
@@ -64,12 +80,14 @@ Each finding is state-aware — returning Satisfied, Partial, or Gap — with ci
 - Report-only policy detection
 - Sign-in log telemetry — legacy auth attempts by account, MFA challenge rate, failures
 
-### Extended Data (Graph — optional flags)
-- Per-user MFA registration status (`-MFAReport`)
-- Admin accounts without MFA registered
-- Microsoft Secure Score current and max (`-SecureScore`)
-- Top 10 improvement opportunities by score impact
-- Per-control implementation status
+### Graph Extended Data (Optional Flags)
+- Per-user MFA registration status with admin flagging (`-MFAReport`)
+- Microsoft Secure Score with top improvement opportunities (`-SecureScore`)
+- Admin role inventory and over-privilege detection (`-AdminRoles`)
+- Stale accounts inactive 90+ days (`-StaleAccounts`)
+- External guest account inventory (`-GuestInventory`)
+- Named location definition check (`-NamedLocations`)
+- High-privilege service principal inventory (`-ServicePrincipals`)
 
 ---
 
@@ -83,11 +101,13 @@ Each finding is state-aware — returning Satisfied, Partial, or Gap — with ci
 | HIPAA Security Rule NPRM | December 27 2024 proposed rule | `-HIPAAProposed` |
 | CISA Zero Trust Maturity Model | 2023 | `-ZeroTrust` |
 
+**Default behavior:** When no framework flag is passed, `-NIST` is applied automatically. This is the only case where NIST applies without being explicitly passed. If you pass `-HIPAA` without `-NIST`, you get HIPAA only.
+
 ### HIPAA NPRM Note
 
 The December 2024 NPRM proposes eliminating the required/addressable distinction across all implementation specifications. Expected final rule: May 2026 with a 240-day compliance window.
 
-Running `-HIPAA -HIPAAProposed` together produces a dual-state gap analysis showing current compliance posture alongside exposure against the incoming mandatory standard.
+Running `-HIPAA -HIPAAProposed` together produces a dual-state gap analysis showing current compliance posture alongside exposure against the incoming mandatory standard. Recommended for all healthcare client engagements.
 
 ### Finding States
 
@@ -107,9 +127,9 @@ NLS-Assessment/
 |-- Invoke-NLSAssessment.ps1           # Orchestrator -- run this
 |
 |-- Modules/
-|   |-- NLS.Core.psm1                  # Output safety, coverage tracking, exceptions
-|   |-- NLS.Exchange.psm1              # Exchange Online collector (v2 granular lists)
-|   |-- NLS.ConditionalAccess.psm1     # Graph CA, telemetry, MFA status, Secure Score
+|   |-- NLS.Core.psm1                  # Output safety, coverage, exceptions, security controls
+|   |-- NLS.Exchange.psm1              # Exchange Online + DMARC + shared mailbox collectors
+|   |-- NLS.ConditionalAccess.psm1     # Graph CA, telemetry, MFA, Secure Score, inventory
 |   |-- NLS.FrameworkDictionary.psm1   # 228 state-aware compliance citations (data only)
 |   |-- NLS.Scoring.psm1               # Scoring engine with affected objects and state comparison
 |   `-- NLS.Reporting.psm1             # Markdown report with all v2 sections
@@ -125,7 +145,7 @@ NLS-Assessment/
 
 ### Data and Logic Separation
 
-`NLS.FrameworkDictionary.psm1` contains only compliance mapping data. When a framework releases a new version, only this file changes.
+`NLS.FrameworkDictionary.psm1` contains only compliance mapping data. When a framework releases a new version, only this file changes. The scoring engine, orchestrator, and reporting module are untouched.
 
 Update procedure:
 1. Open `NLS.FrameworkDictionary.psm1`
@@ -134,13 +154,22 @@ Update procedure:
 4. Update `DictionaryVersion` at bottom of file
 5. Commit and tag release
 
+### Security Controls in NLS.Core
+
+v2 adds four security functions to `NLS.Core.psm1`:
+
+- `Test-NLSInputUPN` — validates UPN format before passing to connection cmdlets
+- `Test-NLSModuleIntegrity` — verifies all NLS modules loaded from expected path, aborts on violation
+- `Protect-NLSOutputPath` — locks output directory permissions to current user
+- `Protect-NLSExceptionsRedaction` — applies full redaction to exceptions log when `-RedactSensitiveData` is passed (bug fix from v1)
+
 ---
 
 ## Requirements
 
 ### PowerShell Version
 
-PowerShell 7+ is required. v2 uses `#Requires -Version 7.0`. Windows PowerShell 5.1 is not supported.
+PowerShell 7+ is required. `#Requires -Version 7.0` is enforced. Windows PowerShell 5.1 is not supported.
 
 ```powershell
 winget install Microsoft.PowerShell
@@ -159,8 +188,8 @@ Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
 |---|---|
 | Exchange Admin or Global Admin | Exchange Online collection |
 | `Policy.Read.ConditionalAccess` | CA policy collection |
-| `Directory.Read.All` | Graph directory access |
-| `AuditLog.Read.All` | Sign-in log telemetry (Full mode) |
+| `Directory.Read.All` | Graph directory access, admin roles, guest inventory, service principals |
+| `AuditLog.Read.All` | Sign-in log telemetry (Full mode), stale accounts |
 | `Reports.Read.All` | User MFA registration status (`-MFAReport`) |
 | `SecurityEvents.Read.All` | Secure Score (`-SecureScore`) |
 
@@ -174,16 +203,26 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ## First Run Setup
 
+Files downloaded from GitHub are marked untrusted by Windows. Run once after downloading:
+
 ```powershell
 Unblock-File -Path .\Invoke-NLSAssessment.ps1
 Unblock-File -Path .\Modules\*.psm1
 ```
 
-Run once after downloading. Repeat if new module files are added.
+Repeat if new module files are added after an update.
 
 ---
 
 ## Usage
+
+### Get Help
+
+```powershell
+.\Invoke-NLSAssessment.ps1 --help
+```
+
+Displays branded help output with all flags, examples, permissions, and troubleshooting.
 
 ### Exchange Only — Quick Triage
 
@@ -203,34 +242,48 @@ Run once after downloading. Repeat if new module files are added.
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -RedactSensitiveData
 ```
 
-### Full v2 Stack — All Features
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport
-```
-
 ### Healthcare Client — Full Engagement
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -SecureScore -MFAReport -RedactSensitiveData
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -HIPAA -HIPAAProposed -SecureScore -MFAReport -DMARC -SharedMailboxes -RedactSensitiveData
 ```
 
-### Auto-Open Report on Completion
+### Full v2 Stack — All Features
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -OpenReport
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport -AdminRoles -StaleAccounts -GuestInventory -NamedLocations -ServicePrincipals -DMARC -SharedMailboxes
 ```
 
-### Quick Mode — Skip Telemetry
+### MSP Tenant Assessment — Recommended Starting Point
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -Quick -NIST
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -AdminRoles -StaleAccounts -GuestInventory -DMARC -SharedMailboxes -RedactSensitiveData
 ```
 
 ### Redacted Output
 
 ```powershell
 .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -RedactSensitiveData
+```
+
+Scrubs UPNs, GUIDs, IP addresses, and tenant-specific URLs from all output including the exceptions log.
+
+### Auto-Open Report
+
+```powershell
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -OpenReport
+```
+
+Opens `AssessmentSummary.md` on completion in the system default `.md` handler.
+
+### Navigate to Tool Directory
+
+```powershell
+# Option 1 -- PowerShell shorthand
+cd ~\Downloads\nextlayersec-assessment-main\nextlayersec-assessment-main
+
+# Option 2 -- Right-click the folder in File Explorer
+# Select "Open in Terminal" -- opens PowerShell 7 directly in the correct directory
 ```
 
 ---
@@ -242,19 +295,26 @@ All artifacts written to `output\<timestamp>\` relative to the script directory.
 | File | Contents |
 |---|---|
 | `AssessmentSummary.md` | Full findings report with all v2 sections |
-| `Exceptions.md` | Non-fatal collection errors |
+| `Exceptions.md` | Non-fatal collection errors — fully redacted when `-RedactSensitiveData` is passed |
 
 ### Report Sections
 
 The v2 report includes the following sections in order:
 
-1. **Assessment Metadata** — execution time, operator, module versions
+1. **Assessment Metadata** — execution time, operator, mode, frameworks active, features active, module versions
 2. **Microsoft Secure Score** — current score, top improvement opportunities (if `-SecureScore`)
-3. **User MFA Status** — per-user MFA registration table (if `-MFAReport`)
-4. **Executive Summary** — Gap/Partial/Satisfied counts
-5. **Collection Coverage** — status per control family
-6. **Conditional Access Policy Inventory** — full policy table and missing policy checklist
-7. **Findings** — grouped by severity and category with full v2 detail
+3. **User MFA Status** — per-user MFA registration table with admin flagging (if `-MFAReport`)
+4. **Executive Summary** — Gap/Partial/Satisfied counts with gap alert
+5. **Collection Coverage** — status per control family with licensing gap notice
+6. **Admin Role Inventory** — role table with over-privilege detection (if `-AdminRoles`)
+7. **Stale Account Analysis** — inactive accounts with last sign-in (if `-StaleAccounts`)
+8. **Guest Account Inventory** — external guests with stale detection (if `-GuestInventory`)
+9. **Named Locations** — Zero Trust gap warning if none defined (if `-NamedLocations`)
+10. **Service Principal Inventory** — high-privilege app detection (if `-ServicePrincipals`)
+11. **DMARC Policy Status** — policy state per domain (if `-DMARC`)
+12. **Shared Mailbox Hardening** — interactive sign-in and legacy protocol exposure (if `-SharedMailboxes`)
+13. **Conditional Access Policy Inventory** — full policy table and missing policy checklist
+14. **Findings** — grouped by severity and category with full v2 detail
 
 ### Sample v2 Finding
 
@@ -276,27 +336,22 @@ The v2 report includes the following sections in order:
 | **Current State** | Enabled on 69 mailbox(es) |
 | **Recommended** | Disabled on all mailboxes |
 
-> *Frameworks: **NIST:** CM-7, IA-2(6) | **CIS:** 4.8 | **HIPAA (Current):** §164.312(a)(2)(i), §164.312(d), §164.312(e)(1)*
+**NIST SP 800-53 Rev 5**
+- Controls: CM-7, IA-2(6)
+- CM-7 requires disabling protocols not required for operation. POP3 is unnecessary in modern M365 tenants.
+- Requirement level: Required
+
+**HIPAA Security Rule (Current Enforceable)**
+- Citations: §164.312(a)(2)(i), §164.312(d), §164.312(e)(1)
+- POP3 authenticates with basic credentials, bypassing person authentication and transmission security.
+- Requirement: Addressable
+
+**HIPAA Security Rule (NPRM Proposed — Expected Final May 2026)**
+- Citations: §164.312(a)(2)(i), §164.312(e)(1)
+- Under proposed rule transmission security is mandatory. No addressable alternative pathway.
+- Requirement: Required -- NPRM eliminates addressable distinction
 
 *Remediation:* Run Get-CasMailbox -ResultSize Unlimited | Set-CasMailbox -PopEnabled $false
-```
-
-### Sample CA Policy Inventory
-
-```markdown
-## Conditional Access Policy Inventory
-
-| Policy Name           | State       | MFA Grant | Legacy Auth Block | Device Compliance |
-|-----------------------|-------------|-----------|-------------------|-------------------|
-| Block Legacy Auth     | enabled     | No        | Yes               | No                |
-| Require MFA All Users | reportOnly  | Yes       | No                | No                |
-
-### Recommended Policies Not Found
-
-- [ ] Require MFA for all users -- all cloud apps
-- [ ] Require compliant device for corporate resources
-- [ ] Block access for high sign-in risk (Entra ID Protection)
-- [ ] Require phishing-resistant MFA for privileged admin roles
 ```
 
 ---
@@ -306,20 +361,23 @@ The v2 report includes the following sections in order:
 | Status | Meaning |
 |---|---|
 | Collected | Data retrieved and scored successfully |
-| Partial | Data retrieved but incomplete |
-| NotCollected | Operator skipped via flag |
+| Partial | Data retrieved but incomplete — permissions or licensing gap |
+| NotCollected | Operator did not pass the required flag |
 | Unsupported | Tenant licensing does not support this control |
+
+**Licensing gap notice:** When controls return Partial due to missing licenses (e.g. Defender for Office 365 cmdlets not found), the report includes a licensing note explaining the gap. This is a licensing issue, not a security finding. The exceptions log documents the full error detail.
 
 ---
 
 ## Operational Notes
 
-- Always run from a dedicated admin account
+- Always run from a dedicated admin account — not your primary user account
 - Use `-RedactSensitiveData` for any artifacts leaving your workstation
 - The `output\` directory is gitignored — do not commit assessment artifacts
 - Run from PowerShell 7 — Windows PowerShell 5.1 is not supported in v2
 - First Graph run against a new tenant prompts for browser consent
-- `-MFAReport` and `-SecureScore` require additional Graph scopes and will prompt for consent
+- `-MFAReport` and `-SecureScore` require additional Graph scopes and will prompt for expanded consent
+- Extended inventory flags (`-AdminRoles`, `-StaleAccounts`, `-GuestInventory`, `-ServicePrincipals`) add significant collection time on large tenants
 
 ---
 
@@ -327,10 +385,10 @@ The v2 report includes the following sections in order:
 
 | Framework | Version Mapped | Last Updated |
 |---|---|---|
-| NIST SP 800-53 | Rev 5 Release 5.2.0 | 2026-04-23 |
-| CIS Controls | v8.1 June 2024 | 2026-04-23 |
-| HIPAA Security Rule | 45 CFR 164.312 current enforceable | 2026-04-23 |
-| HIPAA NPRM | December 27 2024 proposed rule | 2026-04-23 |
+| NIST SP 800-53 | Rev 5 Release 5.2.0 | 2026-04-24 |
+| CIS Controls | v8.1 June 2024 | 2026-04-24 |
+| HIPAA Security Rule | 45 CFR 164.312 current enforceable | 2026-04-24 |
+| HIPAA NPRM | December 27 2024 proposed rule | 2026-04-24 |
 
 ---
 
@@ -347,32 +405,63 @@ Unblock-File -Path .\Modules\*.psm1
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Get-ExecutionPolicy -Scope CurrentUser
+# Should return: RemoteSigned
 ```
 
 ### Graph module assembly conflict
+
+Symptom: `Could not load file or assembly 'Microsoft.Graph.Authentication'`
 
 ```powershell
 Install-Module Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
 ```
 
-Close PowerShell and reopen in a fresh PowerShell 7 session.
+Close PowerShell completely and reopen in a fresh PowerShell 7 session.
 
 ### Conditional Access returns Partial
+
+Symptom: `ConditionalAccess | Partial | One or more errors occurred`
 
 ```powershell
 Get-Command Get-MgIdentityConditionalAccessPolicy -ErrorAction SilentlyContinue
 ```
 
-If missing:
+If missing or old version:
 ```powershell
 Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
 ```
+
+### Conditional Access Partial on Global Admin Account
+
+Symptom: `ConditionalAccess | Partial | [AccessDenied] : required scopes are missing in the token`
+
+Cause: Stale cached Graph token from a previous session that did not include `Policy.Read.ConditionalAccess`. Global Admin does not override a cached token with missing scopes.
+
+Fix:
+```powershell
+Disconnect-MgGraph -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:USERPROFILE\.mg" -Recurse -Force -ErrorAction SilentlyContinue
+```
+
+Then run again. The browser will open for fresh consent. Accept all requested permissions on the consent screen.
+
+### Defender for Office 365 Cmdlets Not Found
+
+Symptom: `DefenderO365 | Partial | The term 'Get-SafeAttachmentPolicy' is not recognized`
+
+Cause: The tenant does not have Defender for Office 365 Plan 1 or Plan 2. Required licenses:
+- Microsoft 365 Business Premium
+- Microsoft Defender for Office 365 Plan 1 or Plan 2
+- Microsoft 365 E3/E5
+
+This is a licensing gap, not a security finding. All other controls still assess and score correctly. The exceptions log documents the full error.
 
 ### MFA Report returns Partial
 
 Symptom: `UserMFAStatus | Partial | Requires Reports.Read.All scope`
 
-The `-MFAReport` flag requires `Reports.Read.All`. Ensure the admin account consents to this scope when the browser opens. If the scope was not included in a previous consent, disconnect Graph and reconnect:
+The `-MFAReport` flag requires `Reports.Read.All`. Disconnect and reconnect to force scope re-consent:
 
 ```powershell
 Disconnect-MgGraph
@@ -381,9 +470,7 @@ Disconnect-MgGraph
 
 ### Secure Score returns Partial
 
-Symptom: `SecureScore | Partial`
-
-The `-SecureScore` flag requires `SecurityEvents.Read.All`. Ensure the admin account consents to this scope when the browser opens.
+The `-SecureScore` flag requires `SecurityEvents.Read.All`. Disconnect and reconnect to force re-consent.
 
 ### Device compliance blocking Graph consent
 
@@ -398,13 +485,19 @@ Options:
 
 Graph was not connected when metadata was collected. Run with Graph enabled.
 
+### Module integrity violation
+
+Symptom: `MODULE INTEGRITY VIOLATION DETECTED`
+
+A module loaded from an unexpected path. Verify the `Modules/` directory contents have not been modified. Re-download from the repo if in doubt.
+
 ---
 
 ## Version History
 
 | Version | Date | Notes |
 |---|---|---|
-| 2.0.0 | 2026-04-24 | Full v2 build — granular detail, CA inventory, MFA report, Secure Score, Zero Trust |
+| 2.0.0 | 2026-04-24 | Full v2 build — all features, security hardening, extended inventory |
 | 1.0.0 | 2026-04-24 | Initial release — public repo nextlayersec-assessment |
 
 ---
