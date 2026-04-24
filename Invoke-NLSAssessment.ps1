@@ -505,8 +505,20 @@ Write-Host '  [+] Module integrity verified' -ForegroundColor DarkGray
 # Output Directory Setup
 # ─────────────────────────────────────────────
 
-$timestamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-$outDir    = Join-Path $scriptDir "output\$timestamp"
+# Build tenant name from UPN for filename
+$tenantName = if ($UserPrincipalName -and $UserPrincipalName -match '@(.+)') {
+    # Extract domain, strip TLD, use first segment
+    $domain = $Matches[1] -split '\.' | Select-Object -First 1
+    $domain.ToLower() -replace '[^a-z0-9]', ''
+} elseif ($SkipConnect) {
+    'tenant'
+} else {
+    'unknown'
+}
+
+$dateStamp  = (Get-Date).ToString('yyyyMMdd')
+$reportName = "$tenantName-$dateStamp"
+$outDir     = Join-Path $scriptDir "output"
 
 try {
     New-Item -Path $outDir -ItemType Directory -Force | Out-Null
@@ -740,8 +752,8 @@ Write-Host ''
 
 Write-Host '[-] Generating assessment artifacts...' -ForegroundColor DarkGray
 
-$summaryPath    = Join-Path $outDir 'AssessmentSummary.md'
-$exceptionsPath = Join-Path $outDir 'Exceptions.md'
+$summaryPath    = Join-Path $outDir "$reportName.md"
+$exceptionsPath = Join-Path $outDir "$reportName-exceptions.md" 
 
 # Build extended data for reporting
 $extendedData = @{}
@@ -787,16 +799,19 @@ Write-Host "  Partial    $($s.Partial)"   -ForegroundColor $(if ($s.Partial -gt 
 Write-Host "  Gap        $($s.Gap)"       -ForegroundColor $(if ($s.Gap -gt 0) { 'Red' } else { 'Green' })
 Write-Host "  Total      $($s.Total)"     -ForegroundColor White
 Write-Host ''
-Write-Host "  Artifacts: $outDir" -ForegroundColor Cyan
+Write-Host "  Report:    $outDir\$reportName.md" -ForegroundColor Cyan
 Write-Host ''
 
-# Auto-open report if -OpenReport flag passed
-if ($OpenReport) {
-    $reportFile = Join-Path $outDir 'AssessmentSummary.md'
-    if (Test-Path $reportFile) {
-        Write-Host '[-] Opening assessment report...' -ForegroundColor DarkGray
-        Start-Process $reportFile
-    }
+# Auto-open report in VS Code if installed
+$reportFile = Join-Path $outDir "$reportName.md"
+$vsCode     = Get-Command code -ErrorAction SilentlyContinue
+if ($vsCode -and (Test-Path $reportFile)) {
+    Write-Host '[-] Opening report in VS Code...' -ForegroundColor DarkGray
+    & code $reportFile
+} elseif ($OpenReport -and (Test-Path $reportFile)) {
+    # -OpenReport flag passed but VS Code not found -- use system default
+    Write-Host '[-] VS Code not found. Opening with system default...' -ForegroundColor DarkGray
+    Start-Process $reportFile
 }
 
 # ─────────────────────────────────────────────
