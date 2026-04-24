@@ -16,6 +16,7 @@ function Publish-NLSAssessmentSummary {
         [Parameter(Mandatory = $true)][hashtable]$Coverage,
         [Parameter(Mandatory = $true)][string]$OutputPath,
         [hashtable]$ExtendedData = @{},
+        [hashtable]$DeltaData = @{},
         [bool]$Redact = $false
     )
 
@@ -47,6 +48,11 @@ function Publish-NLSAssessmentSummary {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine('')
+
+    # ── Delta Report ─────────────────────────────────────────
+    if ($DeltaData -and $DeltaData.Available) {
+        Publish-NLSDeltaSection -Delta $DeltaData -StringBuilder $sb
+    }
 
     # ── Secure Score ─────────────────────────────────────────
     $secureScore = $ExtendedData['SecureScore']
