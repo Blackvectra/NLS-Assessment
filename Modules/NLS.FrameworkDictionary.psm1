@@ -736,6 +736,123 @@ $script:FrameworkDictionary = @{
     }
 }
 
+
+    # ── Extended Check ControlIds ─────────────────────────────
+    $script:FrameworkDictionary['DMARC'] = [ordered]@{
+        Title    = 'Enforce DMARC policy to p=reject'
+        Category = 'Email Authentication'
+        NIST = @{
+            Satisfied = @{ Citation = 'SI-8, SC-5'; Requirement = 'Required'; Detail = 'DMARC at p=reject. SI-8 Spam Protection and SC-5 Denial of Service Protection satisfied.' }
+            Partial   = @{ Citation = 'SI-8, SC-5'; Requirement = 'Required'; Detail = 'DMARC published but not at p=reject. Sender authentication not fully enforced.' }
+            Gap       = @{ Citation = 'SI-8, SC-5'; Requirement = 'Required'; Detail = 'No DMARC record. Domain spoofing attacks unmitigated.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '9.1'; Requirement = 'IG1'; Detail = 'DMARC at p=reject satisfies CIS 9.1 email domain protection.' }
+            Partial   = @{ Citation = '9.1'; Requirement = 'IG1'; Detail = 'DMARC published but not enforced. CIS 9.1 partially satisfied.' }
+            Gap       = @{ Citation = '9.1'; Requirement = 'IG1'; Detail = 'No DMARC. CIS 9.1 not satisfied.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = 'SS164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'DMARC enforced. Domain spoofing of ePHI-bearing domains prevented.' }
+            Partial   = @{ Citation = 'SS164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'DMARC not fully enforced. Domain spoofing remains possible.' }
+            Gap       = @{ Citation = 'SS164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'No DMARC. ePHI-bearing domain can be spoofed.' }
+        }
+    }
+
+    $script:FrameworkDictionary['MTASTS'] = [ordered]@{
+        Title    = 'Publish MTA-STS policy for all domains'
+        Category = 'Email Authentication'
+        NIST = @{
+            Satisfied = @{ Citation = 'SC-8'; Requirement = 'Required'; Detail = 'MTA-STS published. SMTP downgrade attacks mitigated. SC-8 Transmission Integrity satisfied.' }
+            Partial   = @{ Citation = 'SC-8'; Requirement = 'Required'; Detail = 'MTA-STS partially published. Some domains missing policy.' }
+            Gap       = @{ Citation = 'SC-8'; Requirement = 'Required'; Detail = 'No MTA-STS. SMTP connections subject to downgrade attacks. SC-8 not satisfied.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '9.1'; Requirement = 'IG2'; Detail = 'MTA-STS enforces TLS for inbound SMTP.' }
+            Partial   = @{ Citation = '9.1'; Requirement = 'IG2'; Detail = 'MTA-STS partially deployed.' }
+            Gap       = @{ Citation = '9.1'; Requirement = 'IG2'; Detail = 'No MTA-STS policy. Email transport security not enforced.' }
+        }
+    }
+
+    $script:FrameworkDictionary['InboundSpamPolicy'] = [ordered]@{
+        Title    = 'Harden inbound spam policy'
+        Category = 'Threat Protection'
+        NIST = @{
+            Satisfied = @{ Citation = 'SI-3, SI-8'; Requirement = 'Required'; Detail = 'Inbound spam policy hardened. High confidence spam and phish quarantined.' }
+            Partial   = @{ Citation = 'SI-3, SI-8'; Requirement = 'Required'; Detail = 'Inbound spam policy not fully hardened.' }
+            Gap       = @{ Citation = 'SI-3, SI-8'; Requirement = 'Required'; Detail = 'Inbound spam policy permissive. SI-3 and SI-8 not fully satisfied.' }
+        }
+    }
+
+    $script:FrameworkDictionary['MalwareFilterPolicy'] = [ordered]@{
+        Title    = 'Harden malware filter policy'
+        Category = 'Threat Protection'
+        NIST = @{
+            Satisfied = @{ Citation = 'SI-3'; Requirement = 'Required'; Detail = 'Malware filter deletes infected messages. ZAP enabled. SI-3 satisfied.' }
+            Partial   = @{ Citation = 'SI-3'; Requirement = 'Required'; Detail = 'Malware filter partially hardened. Action or ZAP not fully configured.' }
+            Gap       = @{ Citation = 'SI-3'; Requirement = 'Required'; Detail = 'Malware filter not hardened. SI-3 not fully satisfied.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = 'SS164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware protection implemented.' }
+            Partial   = @{ Citation = 'SS164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware protection partially implemented.' }
+            Gap       = @{ Citation = 'SS164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware filter not hardened.' }
+        }
+    }
+
+    $script:FrameworkDictionary['SecurityDefaults'] = [ordered]@{
+        Title    = 'Disable Security Defaults when Conditional Access is active'
+        Category = 'Conditional Access'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-3, IA-2'; Requirement = 'Required'; Detail = 'Security Defaults disabled. CA policies provide granular enforcement.' }
+            Partial   = @{ Citation = 'AC-3, IA-2'; Requirement = 'Required'; Detail = 'Security Defaults state unclear. Verify CA policy coverage.' }
+            Gap       = @{ Citation = 'AC-3, IA-2'; Requirement = 'Required'; Detail = 'Security Defaults enabled alongside CA. Controls may conflict.' }
+        }
+    }
+
+    $script:FrameworkDictionary['AuthMethodsPolicy'] = [ordered]@{
+        Title    = 'Enable strong authentication methods'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'IA-2, IA-5'; Requirement = 'Required'; Detail = 'Strong authentication methods enabled. IA-2 and IA-5 satisfied.' }
+            Partial   = @{ Citation = 'IA-2, IA-5'; Requirement = 'Required'; Detail = 'Some authentication methods enabled but strongest options not active.' }
+            Gap       = @{ Citation = 'IA-2, IA-5'; Requirement = 'Required'; Detail = 'Strong authentication methods not enabled.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = 'SS164.312(d)'; Requirement = 'Required'; Detail = 'Strong authentication methods enabled. Person authentication satisfied.' }
+            Partial   = @{ Citation = 'SS164.312(d)'; Requirement = 'Required'; Detail = 'Authentication methods partially configured.' }
+            Gap       = @{ Citation = 'SS164.312(d)'; Requirement = 'Required'; Detail = 'Strong authentication methods not enabled.' }
+        }
+    }
+
+    $script:FrameworkDictionary['ConsentFramework'] = [ordered]@{
+        Title    = 'Disable user consent to applications'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-3, CM-7'; Requirement = 'Required'; Detail = 'User consent disabled. Admin approval required for all app grants. AC-3 and CM-7 satisfied.' }
+            Partial   = @{ Citation = 'AC-3, CM-7'; Requirement = 'Required'; Detail = 'User consent partially restricted. Some app categories still open.' }
+            Gap       = @{ Citation = 'AC-3, CM-7'; Requirement = 'Required'; Detail = 'Users can consent to apps. OAuth phishing risk. AC-3 and CM-7 not satisfied.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.4'; Requirement = 'IG2'; Detail = 'App consent restricted to admins. CIS 5.4 satisfied.' }
+            Partial   = @{ Citation = '5.4'; Requirement = 'IG2'; Detail = 'App consent partially restricted.' }
+            Gap       = @{ Citation = '5.4'; Requirement = 'IG2'; Detail = 'Open user consent allows privilege escalation. CIS 5.4 not satisfied.' }
+        }
+    }
+
+    $script:FrameworkDictionary['BreakGlass'] = [ordered]@{
+        Title    = 'Configure break-glass emergency access account'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'CP-2, AC-2'; Requirement = 'Required'; Detail = 'Break-glass account configured and excluded from CA. CP-2 and AC-2 satisfied.' }
+            Partial   = @{ Citation = 'CP-2, AC-2'; Requirement = 'Required'; Detail = 'Break-glass account exists but not excluded from CA. Emergency access may fail.' }
+            Gap       = @{ Citation = 'CP-2, AC-2'; Requirement = 'Required'; Detail = 'No break-glass account. Loss of admin access has no recovery path.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = 'SS164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'Emergency access procedure implemented. SS164.312(a)(2)(ii) satisfied.' }
+            Partial   = @{ Citation = 'SS164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'Emergency access account exists but configuration incomplete.' }
+            Gap       = @{ Citation = 'SS164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'No emergency access procedure. SS164.312(a)(2)(ii) not implemented.' }
+        }
+    }
+
 # Dictionary version metadata -- update this when framework versions change
 $script:DictionaryVersion = [ordered]@{
     NIST          = 'SP 800-53 Rev 5 Release 5.2.0'
