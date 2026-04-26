@@ -200,7 +200,7 @@ function Get-NLSExchangePolicies {
                 $exoStatus = $exoDnssec.DnssecFeatureStatus
                 if ($exoStatus -and $exoStatus -ne 'Disabled' -and $exoStatus -ne 'NotSupported') {
                     $dnssecEnabled = $true
-                    $dnssecStatus  = "Enabled via Microsoft ($exoStatus)"
+                    $dnssecStatus  = 'Enabled via Microsoft (EXO verified)'
                     $dnssecSource  = 'EXO'
                 } else {
                     $dnssecStatus = "Not enabled ($exoStatus)"
@@ -236,7 +236,7 @@ function Get-NLSExchangePolicies {
 
         $results['DNSSEC'] = [ordered]@{
             Domains         = @($dnssecResults)
-            DisabledDomains = @($dnssecResults | Where-Object { -not $_.Enabled } | ForEach-Object { $_.Domain })
+            DisabledDomains = @($dnssecResults | Where-Object { -not $_['Enabled'] } | ForEach-Object { $_['Domain'] })
         }
         Register-NLSCoverage -ControlFamily 'DNSSEC' -Status 'Collected'
     } catch {
@@ -262,9 +262,10 @@ function Get-NLSDMARCStatus {
         $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
         $dmarcResults    = foreach ($domain in $acceptedDomains) {
             try {
-                $dnsResult = Resolve-DnsName -Name "_dmarc.$($domain.DomainName)" -Type TXT -ErrorAction Stop
-                $dmarcRecord = $dnsResult | Where-Object { $_.Strings -match 'v=DMARC1' } |
-                    Select-Object -ExpandProperty Strings -First 1
+                $dnsResult = Resolve-DnsName -Name "_dmarc.$($domain.DomainName)" -Type TXT -Server '8.8.8.8' -ErrorAction Stop
+                # Join Strings array and take first matching record
+                $dmarcTxtRecord = $dnsResult | Where-Object { ($_.Strings -join '') -match 'v=DMARC1' } | Select-Object -First 1
+                $dmarcRecord    = if ($dmarcTxtRecord) { ($dmarcTxtRecord.Strings) -join '' } else { $null }
 
                 if ($dmarcRecord) {
                     $policy = if ($dmarcRecord -match 'p=([a-z]+)') { $Matches[1] } else { 'unknown' }
@@ -304,10 +305,10 @@ function Get-NLSDMARCStatus {
 
         $results['DMARC'] = [ordered]@{
             Domains          = @($dmarcResults)
-            EnforcedCount    = ($dmarcResults | Where-Object { $_.Enforced }).Count
-            QuarantineCount  = ($dmarcResults | Where-Object { $_.Partial }).Count
-            MissingCount     = ($dmarcResults | Where-Object { -not $_.HasDMARC }).Count
-            NoneCount        = ($dmarcResults | Where-Object { $_.Policy -eq 'none' }).Count
+            EnforcedCount    = ($dmarcResults | Where-Object { $_['Enforced'] }).Count
+            QuarantineCount  = ($dmarcResults | Where-Object { $_['Partial'] }).Count
+            MissingCount     = ($dmarcResults | Where-Object { -not $_['HasDMARC'] }).Count
+            NoneCount        = ($dmarcResults | Where-Object { $_['Policy'] -eq 'none' }).Count
         }
 
         Register-NLSCoverage -ControlFamily 'DMARC' -Status 'Collected'
@@ -335,12 +336,15 @@ function Get-NLSSharedMailboxHardening {
         $casShared       = Get-CasMailbox -ResultSize Unlimited -ErrorAction Stop |
             Where-Object { $sharedMailboxes.PrimarySmtpAddress -contains $_.PrimarySmtpAddress }
 
-        $signInEnabled = @($sharedMailboxes | Where-Object { $_.AccountDisabled -eq $false })
+        # Exclude system mailboxes -- DiscoverySearchMailbox, SystemMailbox etc
+        $systemMailboxPattern = 'DiscoverySearchMailbox|SystemMailbox|quarantine|Migration|FederatedEmail'
+        $userSharedMailboxes  = @($sharedMailboxes | Where-Object { $_.DisplayName -notmatch $systemMailboxPattern })
+        $signInEnabled = @($userSharedMailboxes | Where-Object { $_.AccountDisabled -eq $false })
         $popEnabled    = @($casShared | Where-Object { $_.PopEnabled })
         $imapEnabled   = @($casShared | Where-Object { $_.ImapEnabled })
 
         $results['SharedMailboxHardening'] = [ordered]@{
-            TotalSharedMailboxes    = $sharedMailboxes.Count
+            TotalSharedMailboxes    = $userSharedMailboxes.Count
             SignInEnabledCount      = $signInEnabled.Count
             PopEnabledCount         = $popEnabled.Count
             ImapEnabledCount        = $imapEnabled.Count
@@ -362,104 +366,186 @@ function Get-NLSSharedMailboxHardening {
 function Get-NLSDNSEmailRecords {
     <#
     .SYNOPSIS
-        Looks up actual DNS records for SPF, DMARC, and DKIM per accepted domain.
-        Surfaces the live record values so you can see exactly what is published.
+        Live DNS lookup for SPF, DMARC, DKIM, DNSSEC, and MTA-STS per accepted domain.
+        Queries 8.8.8.8 (Google Public DNS) directly -- bypasses internal resolvers,
+        cached tenant state, and split-brain DNS. Shows what the public internet sees.
     #>
-    param([bool]$Redact = $false)
+    param(
+        [bool]$Redact    = $false,
+        [bool]$DebugMode = $false
+    )
 
     $results = [ordered]@{}
+
+    function Invoke-PublicDns {
+        # Security note: Queries Google (8.8.8.8) and Cloudflare (1.1.1.1) directly.
+        # -DnssecOk requests DNSSEC records but PowerShell's Resolve-DnsName does NOT
+        # perform full DNSSEC chain-of-trust validation. DNSSEC 'enabled' means records
+        # are present, not that the chain is cryptographically verified.
+        # On networks with intercepted DNS (captive portals, corporate MITM), results
+        # may not reflect true public DNS state.
+        param([string]$Name, [string]$Type)
+        $servers = @('8.8.8.8', '1.1.1.1')
+        foreach ($server in $servers) {
+            try {
+                $r = Resolve-DnsName -Name $Name -Type $Type -Server $server -ErrorAction Stop -DnssecOk
+                if ($r) { return $r }
+            } catch { }
+        }
+        return $null
+    }
 
     try {
         $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
         $dkimConfigs     = Get-DkimSigningConfig -ErrorAction SilentlyContinue
 
+        if ($DebugMode) { Write-Host "  [DNS-DEBUG] Accepted domains: $($acceptedDomains.Count)" -ForegroundColor Cyan }
         $domainRecords = foreach ($domain in $acceptedDomains) {
             $d = $domain.DomainName
+            if ($DebugMode) { Write-Host "  [DNS-DEBUG] Processing: $d" -ForegroundColor Cyan }
 
-            # SPF
+            # ── SPF ──────────────────────────────────────────
             $spfRecord = $null
+            $spfFound  = $false
             try {
-                $spfLookup = Resolve-DnsName -Name $d -Type TXT -ErrorAction Stop
-                $spfRecord = ($spfLookup | Where-Object { $_.Strings -match 'v=spf1' } |
-                    Select-Object -ExpandProperty Strings -First 1) -join ''
+                $spfLookup   = Invoke-PublicDns -Name $d -Type TXT
+                if ($DebugMode) { Write-Host "  [DNS-DEBUG]   SPF lookup returned: $($null -ne $spfLookup)" -ForegroundColor Cyan }
+                $spfRecords  = @($spfLookup | Where-Object { ($_.Strings -join '') -match 'v=spf1' })
+                if ($spfRecords.Count -ge 1) {
+                    $spfRecord = ($spfRecords[0].Strings) -join ''
+                    $spfFound  = ($spfRecord.Length -gt 0)
+                }
             } catch { }
 
-            # DMARC
+            # ── DMARC ─────────────────────────────────────────
             $dmarcRecord = $null
             $dmarcPolicy = 'missing'
-            $dmarcPct    = $null
+            $dmarcPct    = 100
             $dmarcRua    = $null
+            $dmarcFound  = $false
             try {
-                $dmarcLookup = Resolve-DnsName -Name "_dmarc.$d" -Type TXT -ErrorAction Stop
-                $dmarcRecord = ($dmarcLookup | Where-Object { $_.Strings -match 'v=DMARC1' } |
-                    Select-Object -ExpandProperty Strings -First 1) -join ''
-                if ($dmarcRecord) {
-                    if ($dmarcRecord -match 'p=([a-z]+)')   { $dmarcPolicy = $Matches[1] }
-                    if ($dmarcRecord -match 'pct=(\d+)')    { $dmarcPct    = [int]$Matches[1] }
-                    if ($dmarcRecord -match 'rua=([^;]+)')  { $dmarcRua    = $Matches[1].Trim() }
+                $dmarcLookup = Invoke-PublicDns -Name "_dmarc.$d" -Type TXT
+                $dmarcTxt    = @($dmarcLookup | Where-Object { ($_.Strings -join '') -match 'v=DMARC1' }) | Select-Object -First 1
+                if ($dmarcTxt) {
+                    $dmarcRecord = ($dmarcTxt.Strings) -join ''
+                    $dmarcFound  = ($dmarcRecord.Length -gt 0)
+                    if ($dmarcRecord -match 'p=([a-z]+)')  { $dmarcPolicy = $Matches[1] }
+                    if ($dmarcRecord -match 'pct=(\d+)')   { $dmarcPct    = [int]$Matches[1] }
+                    if ($dmarcRecord -match 'rua=([^;]+)') { $dmarcRua    = $Matches[1].Trim() }
                 }
             } catch { }
 
-            # DKIM -- check selector1 and selector2 (M365 defaults)
-            $dkimSelectors = [ordered]@{}
+            # ── DKIM ──────────────────────────────────────────
+            $dkimSelectors  = [ordered]@{}
+            $dkimEnabledEXO = $false
+
             foreach ($selector in @('selector1', 'selector2')) {
-                try {
-                    $dkimLookup = Resolve-DnsName -Name "$selector._domainkey.$d" -Type CNAME -ErrorAction Stop
-                    $dkimSelectors[$selector] = [ordered]@{
-                        Found  = $true
-                        Target = $dkimLookup.NameHost
-                    }
-                } catch {
-                    $dkimSelectors[$selector] = [ordered]@{
-                        Found  = $false
-                        Target = $null
+                $found  = $false
+                $target = $null
+                $type   = $null
+                # Try CNAME first (EXO standard)
+                $cnLookup = Invoke-PublicDns -Name "$selector._domainkey.$d" -Type CNAME
+                if ($cnLookup) { $found = $true; $target = $cnLookup.NameHost; $type = 'CNAME' }
+                # Fall back to TXT (Cloudflare/custom DKIM)
+                if (-not $found) {
+                    $txtLookup = Invoke-PublicDns -Name "$selector._domainkey.$d" -Type TXT
+                    $dkimTxt   = @($txtLookup | Where-Object { ($_.Strings -join '') -match 'v=DKIM1' }) | Select-Object -First 1
+                    if ($dkimTxt) {
+                        $raw   = ($dkimTxt.Strings -join '')
+                        $found = $true
+                        $target = if ($raw.Length -gt 60) { $raw.Substring(0,60) + '...' } else { $raw }
+                        $type  = 'TXT'
                     }
                 }
+                $dkimSelectors[$selector] = [ordered]@{ Found = $found; Target = $target; Type = $type }
             }
 
-            # DKIM enabled in EXO
-            $dkimEnabled = $false
+            # EXO DKIM signing config
             if ($dkimConfigs) {
-                $dkimConfig  = $dkimConfigs | Where-Object { $_.Domain -eq $d }
-                $dkimEnabled = if ($dkimConfig) { $dkimConfig.Enabled } else { $false }
+                $dkimConfig     = $dkimConfigs | Where-Object { $_.Domain -eq $d }
+                $dkimEnabledEXO = if ($dkimConfig) { [bool]$dkimConfig.Enabled } else { $false }
+            }
+
+            $dkimFound = $dkimSelectors['selector1']['Found'] -or $dkimSelectors['selector2']['Found'] -or $dkimEnabledEXO
+
+            # ── DNSSEC ────────────────────────────────────────
+            # Query with -DnssecOk to check for RRSIG records on the wire
+            $dnssecEnabled = $false
+            $dnssecStatus  = 'Not detected'
+
+            # Check EXO API first
+            try {
+                $exoDnssec = Get-DnssecStatusForVerifiedDomain -DomainName $d -ErrorAction Stop
+                $exoStatus = $exoDnssec.DnssecFeatureStatus
+                if ($exoStatus -and $exoStatus -notin @('Disabled','NotSupported')) {
+                    $dnssecEnabled = $true
+                    $dnssecStatus  = 'Enabled via Microsoft (EXO verified)'
+                }
+            } catch { }
+
+            # Public DNS DNSKEY lookup (works for Cloudflare-managed DNSSEC)
+            if (-not $dnssecEnabled) {
+                $dnskey = Invoke-PublicDns -Name $d -Type DNSKEY
+                if ($dnskey) { $dnssecEnabled = $true; $dnssecStatus = 'Enabled (DNSKEY verified via 8.8.8.8)' }
+            }
+
+            # DS record at parent zone
+            if (-not $dnssecEnabled) {
+                $ds = Invoke-PublicDns -Name $d -Type DS
+                if ($ds) { $dnssecEnabled = $true; $dnssecStatus = 'Enabled (DS record found via 8.8.8.8)' }
+            }
+
+            # ── MTA-STS ───────────────────────────────────────
+            $mtaStsEnabled = $false
+            $mtaStsMode    = 'none'
+            $mtaStsRecord  = $null
+            $mtaLookup = Invoke-PublicDns -Name "_mta-sts.$d" -Type TXT
+            if ($mtaLookup) {
+                $mtaTxt = @($mtaLookup | Where-Object { ($_.Strings -join '') -match 'v=STSv1' }) | Select-Object -First 1
+                if ($mtaTxt) {
+                    $mtaStsRecord  = ($mtaTxt.Strings) -join ''
+                    $mtaStsEnabled = $true
+                    $mtaStsMode    = if ($mtaStsRecord -match 'id=([^;]+)') { "published (id=$($Matches[1].Trim()))" } else { 'published' }
+                }
             }
 
             [ordered]@{
-                Domain       = $d
-                SPF          = [ordered]@{
-                    Record   = $spfRecord
-                    Found    = ($null -ne $spfRecord)
-                    Valid    = ($spfRecord -match 'v=spf1')
-                }
-                DMARC        = [ordered]@{
-                    Record   = $dmarcRecord
-                    Found    = ($null -ne $dmarcRecord)
-                    Policy   = $dmarcPolicy
-                    Pct      = $dmarcPct
-                    RUA      = $dmarcRua
-                    Enforced = ($dmarcPolicy -eq 'reject')
-                }
-                DKIM         = [ordered]@{
-                    EnabledInEXO = $dkimEnabled
-                    Selectors    = $dkimSelectors
-                    BothFound    = ($dkimSelectors['selector1'].Found -and $dkimSelectors['selector2'].Found)
-                }
+                Domain  = $d
+                SPF     = [ordered]@{ Found = $spfFound; Record = $spfRecord }
+                DMARC   = [ordered]@{ Found = $dmarcFound;  Record = $dmarcRecord; Policy = $dmarcPolicy; Pct = $dmarcPct; RUA = $dmarcRua; Enforced = ($dmarcPolicy -eq 'reject') }
+                DKIM    = [ordered]@{ Found = $dkimFound;   EnabledInEXO = $dkimEnabledEXO; Selectors = $dkimSelectors; BothFound = ($dkimSelectors['selector1']['Found'] -and $dkimSelectors['selector2']['Found']) }
+                DNSSEC  = [ordered]@{ Enabled = $dnssecEnabled; Status = $dnssecStatus }
+                MTASTS  = [ordered]@{ Enabled = $mtaStsEnabled; Mode = $mtaStsMode; Record = $mtaStsRecord }
             }
         }
 
+        if ($DebugMode) {
+            Write-Host "  [DNS-DEBUG] Total domain records built: $(@($domainRecords).Count)" -ForegroundColor Cyan
+            Write-Host "  [DNS-DEBUG] Storing in results['DNSEmailRecords']" -ForegroundColor Cyan
+        }
         $results['DNSEmailRecords'] = [ordered]@{
-            Domains          = @($domainRecords)
-            SPFMissingCount  = ($domainRecords | Where-Object { -not $_.SPF.Found }).Count
-            DMARCMissingCount = ($domainRecords | Where-Object { -not $_.DMARC.Found }).Count
-            DMARCNoneCount   = ($domainRecords | Where-Object { $_.DMARC.Policy -eq 'none' }).Count
-            DKIMMissingCount = ($domainRecords | Where-Object { -not $_.DKIM.BothFound }).Count
+            Domains           = @($domainRecords)
+            SPFMissingCount   = @($domainRecords | Where-Object { -not $_['SPF']['Found'] }).Count
+            DMARCMissingCount = @($domainRecords | Where-Object { -not $_['DMARC']['Found'] }).Count
+            DKIMMissingCount  = @($domainRecords | Where-Object { -not $_['DKIM']['Found'] }).Count
+            DNSSECMissing     = @($domainRecords | Where-Object { -not $_['DNSSEC']['Enabled'] }).Count
+            MTASTSMissing     = @($domainRecords | Where-Object { -not $_['MTASTS']['Enabled'] }).Count
         }
 
         Register-NLSCoverage -ControlFamily 'DNSEmailRecords' -Status 'Collected'
     } catch {
         Register-NLSException -Source 'Get-NLSDNSEmailRecords' -Message 'Failed to retrieve DNS email records' -ErrorDetails $_.Exception.Message
         Register-NLSCoverage -ControlFamily 'DNSEmailRecords' -Status 'Partial' -Reason $_.Exception.Message
-        $results['DNSEmailRecords'] = $null
+        # Return empty but valid structure so reporting section still renders with what we have
+        $results['DNSEmailRecords'] = [ordered]@{
+            Domains           = @()
+            SPFMissingCount   = 0
+            DMARCMissingCount = 0
+            DKIMMissingCount  = 0
+            DNSSECMissing     = 0
+            MTASTSMissing     = 0
+            Error             = $_.Exception.Message
+        }
     }
 
     return $results
@@ -482,7 +568,7 @@ function Get-NLSMailFlowHardening {
             $mtaStsEnabled = $false
             $mtaStsMode    = 'none'
             try {
-                $mtaRecord = Resolve-DnsName -Name "_mta-sts.$($domain.DomainName)" -Type TXT -ErrorAction Stop
+                $mtaRecord = Resolve-DnsName -Name "_mta-sts.$($domain.DomainName)" -Type TXT -Server '8.8.8.8' -ErrorAction Stop
                 $mtaTxt    = $mtaRecord | Where-Object { $_.Strings -match 'v=STSv1' }
                 if ($mtaTxt) {
                     $mtaStsEnabled = $true
@@ -493,7 +579,7 @@ function Get-NLSMailFlowHardening {
         }
         $results['MTASTS'] = [ordered]@{
             Domains      = @($mtaStsResults)
-            EnabledCount = ($mtaStsResults | Where-Object { $_.MTAStsEnabled }).Count
+            EnabledCount = ($mtaStsResults | Where-Object { $_['MTAStsEnabled'] }).Count
             TotalDomains = $acceptedDomains.Count
         }
         Register-NLSCoverage -ControlFamily 'MTASTS' -Status 'Collected'
@@ -534,7 +620,7 @@ function Get-NLSMailFlowHardening {
         $defaultMalware  = $malwarePolicies | Where-Object { $_.IsDefault } | Select-Object -First 1
         if (-not $defaultMalware) { $defaultMalware = $malwarePolicies | Select-Object -First 1 }
         $results['MalwareFilter'] = [ordered]@{
-            Action                    = $defaultMalware.Action
+            Action                    = if ($defaultMalware.Action) { $defaultMalware.Action } else { 'DeleteMessage' }  # EXO default when property is empty
             EnableFileFilter          = $defaultMalware.EnableFileFilter
             ZapEnabled                = $defaultMalware.ZapEnabled
             NotifyAdmin               = $defaultMalware.EnableInternalSenderNotifications -or $defaultMalware.EnableExternalSenderNotifications
