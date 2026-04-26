@@ -752,9 +752,9 @@ $script:FrameworkDictionary = @{
             Gap       = @{ Citation = '9.1'; Requirement = 'IG1'; Detail = 'No DMARC. CIS 9.1 not satisfied.' }
         }
         HIPAA = @{
-            Satisfied = @{ Citation = 'SS164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'DMARC enforced. Domain spoofing of ePHI-bearing domains prevented.' }
-            Partial   = @{ Citation = 'SS164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'DMARC not fully enforced. Domain spoofing remains possible.' }
-            Gap       = @{ Citation = 'SS164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'No DMARC. ePHI-bearing domain can be spoofed.' }
+            Satisfied = @{ Citation = '§164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'DMARC enforced. Domain spoofing of ePHI-bearing domains prevented.' }
+            Partial   = @{ Citation = '§164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'DMARC not fully enforced. Domain spoofing remains possible.' }
+            Gap       = @{ Citation = '§164.312(e)(1)'; Requirement = 'Addressable'; Detail = 'No DMARC. ePHI-bearing domain can be spoofed.' }
         }
     }
 
@@ -792,9 +792,9 @@ $script:FrameworkDictionary = @{
             Gap       = @{ Citation = 'SI-3'; Requirement = 'Required'; Detail = 'Malware filter not hardened. SI-3 not fully satisfied.' }
         }
         HIPAA = @{
-            Satisfied = @{ Citation = 'SS164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware protection implemented.' }
-            Partial   = @{ Citation = 'SS164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware protection partially implemented.' }
-            Gap       = @{ Citation = 'SS164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware filter not hardened.' }
+            Satisfied = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware protection implemented.' }
+            Partial   = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware protection partially implemented.' }
+            Gap       = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Malware filter not hardened.' }
         }
     }
 
@@ -817,9 +817,9 @@ $script:FrameworkDictionary = @{
             Gap       = @{ Citation = 'IA-2, IA-5'; Requirement = 'Required'; Detail = 'Strong authentication methods not enabled.' }
         }
         HIPAA = @{
-            Satisfied = @{ Citation = 'SS164.312(d)'; Requirement = 'Required'; Detail = 'Strong authentication methods enabled. Person authentication satisfied.' }
-            Partial   = @{ Citation = 'SS164.312(d)'; Requirement = 'Required'; Detail = 'Authentication methods partially configured.' }
-            Gap       = @{ Citation = 'SS164.312(d)'; Requirement = 'Required'; Detail = 'Strong authentication methods not enabled.' }
+            Satisfied = @{ Citation = '§164.312(d)'; Requirement = 'Required'; Detail = 'Strong authentication methods enabled. Person authentication satisfied.' }
+            Partial   = @{ Citation = '§164.312(d)'; Requirement = 'Required'; Detail = 'Authentication methods partially configured.' }
+            Gap       = @{ Citation = '§164.312(d)'; Requirement = 'Required'; Detail = 'Strong authentication methods not enabled.' }
         }
     }
 
@@ -847,9 +847,125 @@ $script:FrameworkDictionary = @{
             Gap       = @{ Citation = 'CP-2, AC-2'; Requirement = 'Required'; Detail = 'No break-glass account. Loss of admin access has no recovery path.' }
         }
         HIPAA = @{
-            Satisfied = @{ Citation = 'SS164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'Emergency access procedure implemented. SS164.312(a)(2)(ii) satisfied.' }
-            Partial   = @{ Citation = 'SS164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'Emergency access account exists but configuration incomplete.' }
-            Gap       = @{ Citation = 'SS164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'No emergency access procedure. SS164.312(a)(2)(ii) not implemented.' }
+            Satisfied = @{ Citation = '§164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'Emergency access procedure implemented. §164.312(a)(2)(ii) satisfied.' }
+            Partial   = @{ Citation = '§164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'Emergency access account exists but configuration incomplete.' }
+            Gap       = @{ Citation = '§164.312(a)(2)(ii)'; Requirement = 'Required'; Detail = 'No emergency access procedure. §164.312(a)(2)(ii) not implemented.' }
+        }
+    }
+
+    # ── Additional Scored Checks ─────────────────────────────
+    $script:FrameworkDictionary['StaleAccounts'] = [ordered]@{
+        Title    = 'Disable or remove stale user accounts'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-2'; Requirement = 'Required'; Detail = 'No stale accounts. AC-2 Account Management satisfied -- inactive accounts reviewed and disabled.' }
+            Partial   = @{ Citation = 'AC-2'; Requirement = 'Required'; Detail = 'Some stale accounts detected. AC-2 requires timely disabling of inactive accounts.' }
+            Gap       = @{ Citation = 'AC-2'; Requirement = 'Required'; Detail = 'Stale accounts present. AC-2 Account Management not satisfied. Inactive accounts expand the attack surface.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.3'; Requirement = 'IG1'; Detail = 'No inactive accounts. CIS 5.3 requires disabling dormant accounts within 45 days.' }
+            Partial   = @{ Citation = '5.3'; Requirement = 'IG1'; Detail = 'Some inactive accounts. CIS 5.3 not fully satisfied.' }
+            Gap       = @{ Citation = '5.3'; Requirement = 'IG1'; Detail = 'Stale accounts not remediated. CIS 5.3 not satisfied.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.308(a)(3)(ii)(C)'; Requirement = 'Addressable'; Detail = 'Stale accounts addressed. Termination procedures implemented.' }
+            Partial   = @{ Citation = '§164.308(a)(3)(ii)(C)'; Requirement = 'Addressable'; Detail = 'Termination procedures partially implemented.' }
+            Gap       = @{ Citation = '§164.308(a)(3)(ii)(C)'; Requirement = 'Addressable'; Detail = 'Stale accounts not addressed. Termination procedures not fully implemented.' }
+        }
+    }
+
+    $script:FrameworkDictionary['GlobalAdminCount'] = [ordered]@{
+        Title    = 'Limit Global Administrator count to 2 or fewer'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-6, AC-2'; Requirement = 'Required'; Detail = 'Global Admin count within recommended limit. AC-6 Least Privilege and AC-2 Account Management satisfied.' }
+            Partial   = @{ Citation = 'AC-6, AC-2'; Requirement = 'Required'; Detail = 'Global Admin count slightly elevated. Review and reduce.' }
+            Gap       = @{ Citation = 'AC-6, AC-2'; Requirement = 'Required'; Detail = 'Excessive Global Admins. AC-6 Least Privilege not satisfied. Each GA is a full-tenant compromise path.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.4'; Requirement = 'IG1'; Detail = 'Privileged access appropriately scoped. CIS 5.4 satisfied.' }
+            Partial   = @{ Citation = '5.4'; Requirement = 'IG1'; Detail = 'Privileged access partially scoped.' }
+            Gap       = @{ Citation = '5.4'; Requirement = 'IG1'; Detail = 'Over-provisioned Global Admin accounts. CIS 5.4 not satisfied.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.308(a)(3)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Access appropriately scoped. Workforce clearance procedure implemented.' }
+            Partial   = @{ Citation = '§164.308(a)(3)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Access partially scoped.' }
+            Gap       = @{ Citation = '§164.308(a)(3)(ii)(B)'; Requirement = 'Addressable'; Detail = 'Excessive privileged access. Workforce clearance procedure not enforced.' }
+        }
+    }
+
+    $script:FrameworkDictionary['SharedMailboxSignIn'] = [ordered]@{
+        Title    = 'Disable interactive sign-in on shared mailboxes'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-2, CM-7'; Requirement = 'Required'; Detail = 'Shared mailbox sign-in disabled. AC-2 Account Management and CM-7 Least Functionality satisfied.' }
+            Partial   = @{ Citation = 'AC-2, CM-7'; Requirement = 'Required'; Detail = 'Some shared mailboxes have sign-in enabled.' }
+            Gap       = @{ Citation = 'AC-2, CM-7'; Requirement = 'Required'; Detail = 'Shared mailboxes with interactive sign-in. Unmonitored privileged access vector. AC-2 not satisfied.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.2'; Requirement = 'IG1'; Detail = 'Shared mailbox accounts not used for interactive login. CIS 5.2 satisfied.' }
+            Partial   = @{ Citation = '5.2'; Requirement = 'IG1'; Detail = 'Some shared mailbox accounts allow interactive login.' }
+            Gap       = @{ Citation = '5.2'; Requirement = 'IG1'; Detail = 'Shared mailbox accounts allow interactive login. CIS 5.2 not satisfied.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.312(a)(2)(i)'; Requirement = 'Required'; Detail = 'Unique user identification enforced. Shared mailboxes not used for interactive access.' }
+            Partial   = @{ Citation = '§164.312(a)(2)(i)'; Requirement = 'Required'; Detail = 'Unique user identification partially enforced.' }
+            Gap       = @{ Citation = '§164.312(a)(2)(i)'; Requirement = 'Required'; Detail = 'Shared mailbox interactive sign-in violates unique user identification requirement.' }
+        }
+    }
+
+    $script:FrameworkDictionary['NamedLocations'] = [ordered]@{
+        Title    = 'Define named locations for Zero Trust network segmentation'
+        Category = 'Conditional Access'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-17, SC-7'; Requirement = 'Required'; Detail = 'Named locations defined. AC-17 Remote Access and SC-7 Boundary Protection supported by network-aware CA policies.' }
+            Partial   = @{ Citation = 'AC-17, SC-7'; Requirement = 'Required'; Detail = 'Named locations partially configured.' }
+            Gap       = @{ Citation = 'AC-17, SC-7'; Requirement = 'Required'; Detail = 'No named locations. CA policies cannot enforce network-based access controls. AC-17 not satisfied.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '6.7'; Requirement = 'IG2'; Detail = 'Network trust boundaries defined. CIS 6.7 centralized access control satisfied.' }
+            Partial   = @{ Citation = '6.7'; Requirement = 'IG2'; Detail = 'Network trust boundaries partially defined.' }
+            Gap       = @{ Citation = '6.7'; Requirement = 'IG2'; Detail = 'No network trust boundaries defined. CIS 6.7 not satisfied.' }
+        }
+    }
+
+    $script:FrameworkDictionary['UserMFAGap'] = [ordered]@{
+        Title    = 'Ensure all users have MFA registered'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'IA-2(1), IA-5'; Requirement = 'Required'; Detail = 'All users have MFA registered. IA-2(1) and IA-5 Authenticator Management satisfied.' }
+            Partial   = @{ Citation = 'IA-2(1), IA-5'; Requirement = 'Required'; Detail = 'Some users lack MFA registration.' }
+            Gap       = @{ Citation = 'IA-2(1), IA-5'; Requirement = 'Required'; Detail = 'Users without MFA cannot satisfy CA MFA grant controls. IA-2(1) not satisfied.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '6.3, 6.5'; Requirement = 'IG1'; Detail = 'All users have MFA registered. CIS 6.3 and 6.5 satisfied.' }
+            Partial   = @{ Citation = '6.3, 6.5'; Requirement = 'IG1'; Detail = 'MFA registration incomplete.' }
+            Gap       = @{ Citation = '6.3, 6.5'; Requirement = 'IG1'; Detail = 'Users without MFA. CIS 6.3 MFA requirement not satisfied.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.312(d)'; Requirement = 'Required'; Detail = 'All users have MFA registered. Person authentication satisfied.' }
+            Partial   = @{ Citation = '§164.312(d)'; Requirement = 'Required'; Detail = 'MFA registration incomplete for some users.' }
+            Gap       = @{ Citation = '§164.312(d)'; Requirement = 'Required'; Detail = 'Users without MFA violate person authentication requirement.' }
+        }
+    }
+
+    $script:FrameworkDictionary['ExternalCollaboration'] = [ordered]@{
+        Title    = 'Restrict guest invitation permissions'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-2, AC-3'; Requirement = 'Required'; Detail = 'Guest invitations restricted to admins. AC-2 Account Management and AC-3 Access Enforcement satisfied.' }
+            Partial   = @{ Citation = 'AC-2, AC-3'; Requirement = 'Required'; Detail = 'Guest invitations partially restricted.' }
+            Gap       = @{ Citation = 'AC-2, AC-3'; Requirement = 'Required'; Detail = 'All users can invite guests. AC-2 and AC-3 not satisfied. Uncontrolled external access.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.4'; Requirement = 'IG2'; Detail = 'External access appropriately gated. CIS 5.4 satisfied.' }
+            Partial   = @{ Citation = '5.4'; Requirement = 'IG2'; Detail = 'External access partially gated.' }
+            Gap       = @{ Citation = '5.4'; Requirement = 'IG2'; Detail = 'Unrestricted guest invitations. CIS 5.4 not satisfied.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.308(a)(4)'; Requirement = 'Addressable'; Detail = 'External access controlled. Information access management satisfied.' }
+            Partial   = @{ Citation = '§164.308(a)(4)'; Requirement = 'Addressable'; Detail = 'External access partially controlled.' }
+            Gap       = @{ Citation = '§164.308(a)(4)'; Requirement = 'Addressable'; Detail = 'Unrestricted external access. Information access management not satisfied.' }
         }
     }
 
