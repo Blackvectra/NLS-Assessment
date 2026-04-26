@@ -60,26 +60,24 @@ function Get-NLSConditionalAccessPolicies {
             }
         }
 
-        $enabledCount    = ($policyResults | Where-Object { $_.IsEnabled }).Count
-        $reportOnlyCount = ($policyResults | Where-Object { $_.IsReportOnly }).Count
-        $disabledCount   = ($policyResults | Where-Object { -not $_.IsEnabled -and -not $_.IsReportOnly }).Count
-        $mfaPolicies     = ($policyResults | Where-Object { $_.HasMfaGrant -and $_.IsEnabled }).Count
-        $legacyBlocking  = ($policyResults | Where-Object { $_.TargetsLegacyAuth -and $_.IsEnabled }).Count
-        $deviceCompliant = ($policyResults | Where-Object { $_.RequiresCompliantDevice -and $_.IsEnabled }).Count
+        $enabledCount    = ($policyResults | Where-Object { $_['IsEnabled'] }).Count
+        $reportOnlyCount = ($policyResults | Where-Object { $_['IsReportOnly'] }).Count
+        $disabledCount   = ($policyResults | Where-Object { -not $_['IsEnabled'] -and -not $_['IsReportOnly'] }).Count
+        $mfaPolicies     = ($policyResults | Where-Object { $_['HasMfaGrant'] -and $_['IsEnabled'] }).Count
+        $legacyBlocking  = ($policyResults | Where-Object { $_['TargetsLegacyAuth'] -and $_['IsEnabled'] }).Count
+        $deviceCompliant = ($policyResults | Where-Object { $_['RequiresCompliantDevice'] -and $_['IsEnabled'] }).Count
 
         # v2 -- detect missing recommended policies
         $hasLegacyBlock      = $legacyBlocking -gt 0
-        # MFA check -- any enabled policy with MFA grant OR AuthenticationStrength targeting all users
-        # Also accept any enabled policy with 'mfa' or 'multifactor' in the name as a signal
         $hasMfaAllUsers      = ($policyResults | Where-Object {
-            $_.IsEnabled -and ($_.HasMfaGrant -or $_.DisplayName -match 'mfa|multifactor|multi-factor')
+            $_['IsEnabled'] -and ($_['HasMfaGrant'] -or $_['DisplayName'] -match 'mfa|multifactor|multi-factor')
         }).Count -gt 0
         $hasDeviceCompliance = $deviceCompliant -gt 0
         $hasHighRiskBlock    = ($policyResults | Where-Object {
-            $_.IsEnabled -and $_.DisplayName -match 'risk|Risk'
+            $_['IsEnabled'] -and $_['DisplayName'] -match 'risk|Risk'
         }).Count -gt 0
         $hasAdminMfa         = ($policyResults | Where-Object {
-            $_.IsEnabled -and $_.DisplayName -match 'admin|Admin|privileged|Privileged|phishing'
+            $_['IsEnabled'] -and $_['DisplayName'] -match 'admin|Admin|privileged|Privileged|phishing'
         }).Count -gt 0
 
         $missingPolicies = @()
@@ -300,13 +298,13 @@ function Get-NLSAdminRoleInventory {
             }
         }
 
-        $globalAdmins     = ($roleInventory | Where-Object { $_.RoleName -eq 'Global Administrator' })
-        $globalAdminCount = if ($globalAdmins) { $globalAdmins.MemberCount } else { 0 }
-        $highPrivCountRaw = ($roleInventory | Where-Object { $_.IsHighPriv } | Measure-Object -Property MemberCount -Sum).Sum
+        $globalAdmins     = ($roleInventory | Where-Object { $_['RoleName'] -eq 'Global Administrator' })
+        $globalAdminCount = if ($globalAdmins) { @($globalAdmins)[0]['MemberCount'] } else { 0 }
+        $highPrivCountRaw = ($roleInventory | Where-Object { $_['IsHighPriv'] } | ForEach-Object { $_['MemberCount'] } | Measure-Object -Sum).Sum
         $highPrivCount    = if ($null -eq $highPrivCountRaw) { 0 } else { $highPrivCountRaw }
 
         $results['AdminRoleInventory'] = [ordered]@{
-            TotalRolesAssigned  = ($roleInventory | Measure-Object).Count
+            TotalRolesAssigned  = @($roleInventory).Count
             GlobalAdminCount    = $globalAdminCount
             HighPrivRoleCount   = $highPrivCount
             GlobalAdminExcessive = $globalAdminCount -gt 2
@@ -594,12 +592,20 @@ function Get-NLSIdentityHardening {
         $results['AuthenticationMethods'] = $null
     }
 
+    # Cache authorization policy -- reused for both ConsentFramework and ExternalCollaboration
+    $authzPolicyCached = $null
+
     # ── App Consent Framework ────────────────────────────────
     try {
-        $authzPolicy = Get-MgPolicyAuthorizationPolicy -ErrorAction Stop
-        $userConsentEnabled = $authzPolicy.DefaultUserRolePermissions.AllowedToCreateApps
+        $authzPolicyCached = Get-MgPolicyAuthorizationPolicy -ErrorAction Stop
+        $authzPolicy = $authzPolicyCached
+        # UsersCanConsentToApps: true if any ManagePermissionGrantsForSelf policy is assigned
+        # Empty PermissionGrantPoliciesAssigned = no user consent allowed (most restrictive)
+        $consentPolicies = $authzPolicy.PermissionGrantPoliciesAssigned
+        $usersCanConsent = ($consentPolicies | Where-Object { $_ -like 'ManagePermissionGrantsForSelf.*' }).Count -gt 0
         $results['ConsentFramework'] = [ordered]@{
-            UsersCanConsentToApps        = $userConsentEnabled
+            UsersCanConsentToApps        = $usersCanConsent
+            PermissionGrantPolicies      = if ($consentPolicies) { $consentPolicies -join ', ' } else { 'None (most restrictive)' }
             DefaultUserCanCreateApps     = $authzPolicy.DefaultUserRolePermissions.AllowedToCreateApps
             DefaultUserCanCreateTenants  = $authzPolicy.DefaultUserRolePermissions.AllowedToCreateTenants
         }
@@ -612,7 +618,7 @@ function Get-NLSIdentityHardening {
 
     # ── External Collaboration ───────────────────────────────
     try {
-        $extCollab = Get-MgPolicyAuthorizationPolicy -ErrorAction Stop
+        $extCollab = if ($authzPolicyCached) { $authzPolicyCached } else { Get-MgPolicyAuthorizationPolicy -ErrorAction Stop }
         $results['ExternalCollaboration'] = [ordered]@{
             GuestInvitePolicy            = $extCollab.AllowInvitesFrom
             AllowExternalIdpSignup       = $extCollab.AllowExternalIdpSignup
