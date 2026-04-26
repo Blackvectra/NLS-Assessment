@@ -193,11 +193,24 @@ param (
     [switch]$DebugScoring,      # Surface verbose scoring errors to console during assessment
 
     [Parameter(Mandatory = $false)]
+    [switch]$DebugDNS,          # Trace DNS collection and rendering pipeline
+
+    [Parameter(Mandatory = $false)]
+    [switch]$DebugAll,          # Full debug -- all sections, all data, all rendering
+
+    [Parameter(Mandatory = $false)]
     [switch]$RedactSensitiveData
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
+
+# ─────────────────────────────────────────────
+# Debug flag expansion
+if ($DebugAll) {
+    $DebugScoring = $true
+    $DebugDNS     = $true
+}
 
 # ─────────────────────────────────────────────
 # Profile Resolution
@@ -659,6 +672,23 @@ Write-Host ''
 Write-Host '[-] Collecting Exchange Online policies...' -ForegroundColor DarkGray
 $exchangeResults = Get-NLSExchangePolicies -Redact $runRedaction
 
+# Initialize all result variables
+$caResults                = @{}
+$caTelemetryResults       = @{}
+$mfaStatusResults         = @{}
+$secureScoreResults       = @{}
+$adminRoleResults         = @{}
+$staleAccountResults      = @{}
+$guestResults             = @{}
+$namedLocationResults     = @{}
+$servicePrincipalResults  = @{}
+$dmarcResults             = @{}
+$sharedMailboxResults     = @{}
+$dnsRecordResults         = @{}
+$mailFlowResults          = @{}
+$identityHardeningResults = @{}
+$breakGlassResults        = @{}
+
 if ($runDMARC) {
     Write-Host '[-] Collecting DMARC policy status...' -ForegroundColor DarkGray
     $dmarcResults = Get-NLSDMARCStatus -Redact $runRedaction
@@ -679,7 +709,7 @@ if ($runSharedMailboxes) {
 
 if ($runDNSRecords) {
     Write-Host '[-] Looking up DNS email records (SPF, DMARC, DKIM)...' -ForegroundColor DarkGray
-    $dnsRecordResults = Get-NLSDNSEmailRecords -Redact $runRedaction
+    $dnsRecordResults = Get-NLSDNSEmailRecords -Redact $runRedaction -DebugMode ([bool]$DebugDNS)
 } else {
     Register-NLSCoverage -ControlFamily 'DNSEmailRecords' `
         -Status 'NotCollected' -Reason 'Operator did not pass -DNSRecords flag'
@@ -694,22 +724,6 @@ if ($runMailFlowHardening) {
     Register-NLSCoverage -ControlFamily 'InboundSpam' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
     Register-NLSCoverage -ControlFamily 'MalwareFilter' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
 }
-
-$caResults                = @{}
-$caTelemetryResults       = @{}
-$mfaStatusResults         = @{}
-$secureScoreResults       = @{}
-$adminRoleResults         = @{}
-$staleAccountResults      = @{}
-$guestResults             = @{}
-$namedLocationResults     = @{}
-$servicePrincipalResults  = @{}
-$dmarcResults             = @{}
-$sharedMailboxResults     = @{}
-$dnsRecordResults         = @{}
-$mailFlowResults          = @{}
-$identityHardeningResults = @{}
-$breakGlassResults        = @{}
 
 if ($runGraph) {
     Write-Host '[-] Collecting Conditional Access policies...' -ForegroundColor DarkGray
@@ -832,6 +846,10 @@ $allResults = @{
     MailFlow                   = $mailFlowResults
     IdentityHardening          = $identityHardeningResults
     BreakGlass                 = $breakGlassResults
+    StaleAccounts              = $staleAccountResults
+    AdminRoles                 = $adminRoleResults
+    NamedLocations             = $namedLocationResults
+    MFAStatus                  = $mfaStatusResults
 }
 
 # Pass framework flags directly from current variable values
@@ -878,7 +896,7 @@ if ($namedLocationResults -and $namedLocationResults['NamedLocations'])         
 if ($servicePrincipalResults -and $servicePrincipalResults['ServicePrincipalInventory']) { $extendedData['ServicePrincipalInventory'] = $servicePrincipalResults['ServicePrincipalInventory'] }
 if ($dmarcResults -and $dmarcResults['DMARC'])                                     { $extendedData['DMARC']                    = $dmarcResults['DMARC'] }
 if ($sharedMailboxResults -and $sharedMailboxResults['SharedMailboxHardening'])    { $extendedData['SharedMailboxHardening']   = $sharedMailboxResults['SharedMailboxHardening'] }
-if ($dnsRecordResults -and $dnsRecordResults['DNSEmailRecords'])                   { $extendedData['DNSEmailRecords']          = $dnsRecordResults['DNSEmailRecords'] }
+if ($dnsRecordResults)                                                              { $extendedData['DNSEmailRecords']          = $dnsRecordResults['DNSEmailRecords'] }
 if ($mailFlowResults -and $mailFlowResults['MTASTS'])                               { $extendedData['MTASTS']                   = $mailFlowResults['MTASTS'] }
 if ($mailFlowResults -and $mailFlowResults['InboundSpam'])                          { $extendedData['InboundSpam']              = $mailFlowResults['InboundSpam'] }
 if ($mailFlowResults -and $mailFlowResults['MalwareFilter'])                        { $extendedData['MalwareFilter']            = $mailFlowResults['MalwareFilter'] }
@@ -888,8 +906,25 @@ if ($identityHardeningResults -and $identityHardeningResults['ConsentFramework']
 if ($identityHardeningResults -and $identityHardeningResults['PIM'])               { $extendedData['PIM']                      = $identityHardeningResults['PIM'] }
 if ($breakGlassResults -and $breakGlassResults['BreakGlassAccounts'])              { $extendedData['BreakGlassAccounts']        = $breakGlassResults['BreakGlassAccounts'] }
 
+if ($DebugAll) {
+    Write-Host '  [DEBUG] === allResults keys ===' -ForegroundColor DarkGray
+    foreach ($k in ($allResults.Keys | Sort-Object)) {
+        $v = $allResults[$k]
+        $d = if ($null -eq $v) { 'NULL' } elseif ($v -is [System.Collections.Specialized.OrderedDictionary]) { "[ordered]($($v.Keys.Count))" } elseif ($v -is [hashtable]) { "[hashtable]($($v.Keys.Count))" } else { $v.GetType().Name }
+        Write-Host "    $($k.PadRight(30)) $d" -ForegroundColor DarkGray
+    }
+    Write-Host '  [DEBUG] === extendedData keys ===' -ForegroundColor DarkGray
+    foreach ($k in ($extendedData.Keys | Sort-Object)) {
+        $v = $extendedData[$k]
+        $d = if ($null -eq $v) { 'NULL' } elseif ($v -is [System.Collections.Specialized.OrderedDictionary]) { "[ordered]($($v.Keys.Count)) keys: $($v.Keys -join ', ')" } elseif ($v -is [hashtable]) { "[hashtable]($($v.Keys.Count))" } else { $v.GetType().Name }
+        Write-Host "    $($k.PadRight(30)) $d" -ForegroundColor DarkGray
+    }
+    Write-Host '' -ForegroundColor DarkGray
+}
+
 Publish-NLSAssessmentSummary `
     -ScoredResults $scoredResults `
+    -DebugDNS ([bool]$DebugDNS) `
     -Metadata $metadata `
     -Coverage (Get-NLSCoverageMap) `
     -OutputPath $summaryPath `
@@ -940,22 +975,22 @@ if ($previousReport) {
 # Summary Output
 # ─────────────────────────────────────────────
 
-$s = $scoredResults.Summary
+$s = $scoredResults['Summary']
 
 Write-Host ''
 Write-Host '================================================================' -ForegroundColor DarkGray
 Write-Host '  Assessment Complete' -ForegroundColor White
 Write-Host '================================================================' -ForegroundColor DarkGray
-Write-Host "  Satisfied  $($s.Satisfied)" -ForegroundColor Green
-Write-Host "  Partial    $($s.Partial)"   -ForegroundColor $(if ($s.Partial -gt 0) { 'Yellow' } else { 'Green' })
-Write-Host "  Gap        $($s.Gap)"       -ForegroundColor $(if ($s.Gap -gt 0) { 'Red' } else { 'Green' })
-Write-Host "  Total      $($s.Total)"     -ForegroundColor White
+Write-Host "  Satisfied  $($s['Satisfied'])" -ForegroundColor Green
+Write-Host "  Partial    $($s['Partial'])"   -ForegroundColor $(if ($s['Partial'] -gt 0) { 'Yellow' } else { 'Green' })
+Write-Host "  Gap        $($s['Gap'])"       -ForegroundColor $(if ($s['Gap'] -gt 0) { 'Red' } else { 'Green' })
+Write-Host "  Total      $($s['Total'])"     -ForegroundColor White
 Write-Host ''
 Write-Host "  Report:      $outDir\$reportName.md" -ForegroundColor Cyan
 Write-Host "  Remediation: $outDir\$reportName-remediation.ps1" -ForegroundColor Cyan
 Write-Host "  Exceptions:  $outDir\$reportName-exceptions.md" -ForegroundColor DarkGray
-if ($deltaData.Available) {
-    Write-Host "  Delta:       Improved $($deltaData.ImprovedCount)  Regressed $($deltaData.RegressedCount)  New $($deltaData.NewCount)" -ForegroundColor Cyan
+if ($deltaData['Available']) {
+    Write-Host "  Delta:       Improved $($deltaData['ImprovedCount'])  Regressed $($deltaData['RegressedCount'])  New $($deltaData['NewCount'])" -ForegroundColor Cyan
 }
 Write-Host ''
 
