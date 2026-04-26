@@ -80,40 +80,40 @@ function Get-NLSDeltaReport {
     $unchanged  = @()
     $newFindings = @()
 
-    foreach ($finding in $CurrentResults.Findings) {
-        $prevState = $previousFindings[$finding.Title]
+    foreach ($finding in $CurrentResults['Findings']) {
+        $prevState = $previousFindings[$finding['Title']]
 
         if (-not $prevState) {
             $newFindings += [ordered]@{
-                Title    = $finding.Title
-                Category = $finding.Category
-                State    = $finding.State
+                Title    = $finding['Title']
+                Category = $finding['Category']
+                State    = $finding['State']
             }
             continue
         }
 
         $stateOrder = @{ 'Gap' = 0; 'Partial' = 1; 'Satisfied' = 2 }
         $prevOrder  = $stateOrder[$prevState]
-        $currOrder  = $stateOrder[$finding.State]
+        $currOrder  = $stateOrder[$finding['State']]
 
         if ($currOrder -gt $prevOrder) {
             $improved += [ordered]@{
-                Title        = $finding.Title
-                Category     = $finding.Category
+                Title        = $finding['Title']
+                Category     = $finding['Category']
                 PreviousState = $prevState
-                CurrentState  = $finding.State
+                CurrentState  = $finding['State']
             }
         } elseif ($currOrder -lt $prevOrder) {
             $regressed += [ordered]@{
-                Title        = $finding.Title
-                Category     = $finding.Category
+                Title        = $finding['Title']
+                Category     = $finding['Category']
                 PreviousState = $prevState
-                CurrentState  = $finding.State
+                CurrentState  = $finding['State']
             }
         } else {
             $unchanged += [ordered]@{
-                Title  = $finding.Title
-                State  = $finding.State
+                Title  = $finding['Title']
+                State  = $finding['State']
             }
         }
     }
@@ -145,53 +145,53 @@ function Publish-NLSDeltaSection {
 
     $sb = $StringBuilder
 
-    if (-not $Delta.Available) {
+    if (-not $Delta['Available']) {
         return
     }
 
     [void]$sb.AppendLine('## Delta Report')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine("> Comparison against previous report: $($Delta.PreviousReport | Split-Path -Leaf)")
+    [void]$sb.AppendLine("> Comparison against previous report: $($Delta['PreviousReport'] | Split-Path -Leaf)")
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('| Category | Count |')
     [void]$sb.AppendLine('|---|:---:|')
-    [void]$sb.AppendLine("| Improved | $($Delta.ImprovedCount) |")
-    [void]$sb.AppendLine("| Regressed | $($Delta.RegressedCount) |")
-    [void]$sb.AppendLine("| Unchanged | $($Delta.UnchangedCount) |")
-    [void]$sb.AppendLine("| New Findings | $($Delta.NewCount) |")
+    [void]$sb.AppendLine("| Improved | $($Delta['ImprovedCount']) |")
+    [void]$sb.AppendLine("| Regressed | $($Delta['RegressedCount']) |")
+    [void]$sb.AppendLine("| Unchanged | $($Delta['UnchangedCount']) |")
+    [void]$sb.AppendLine("| New Findings | $($Delta['NewCount']) |")
     [void]$sb.AppendLine('')
 
-    if ($Delta.ImprovedCount -gt 0) {
+    if ($Delta['ImprovedCount'] -gt 0) {
         [void]$sb.AppendLine('### Improved')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('| Control | Previous | Current |')
         [void]$sb.AppendLine('|---|:---:|:---:|')
-        foreach ($item in $Delta.Improved) {
-            [void]$sb.AppendLine("| $($item.Title) | $($item.PreviousState) | $($item.CurrentState) |")
+        foreach ($item in $Delta['Improved']) {
+            [void]$sb.AppendLine("| $($item['Title']) | $($item['PreviousState']) | $($item['CurrentState']) |")
         }
         [void]$sb.AppendLine('')
     }
 
-    if ($Delta.RegressedCount -gt 0) {
+    if ($Delta['RegressedCount'] -gt 0) {
         [void]$sb.AppendLine('### Regressed')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('> **Action required. Controls that previously passed have regressed.**')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('| Control | Previous | Current |')
         [void]$sb.AppendLine('|---|:---:|:---:|')
-        foreach ($item in $Delta.Regressed) {
-            [void]$sb.AppendLine("| $($item.Title) | $($item.PreviousState) | $($item.CurrentState) |")
+        foreach ($item in $Delta['Regressed']) {
+            [void]$sb.AppendLine("| $($item['Title']) | $($item['PreviousState']) | $($item['CurrentState']) |")
         }
         [void]$sb.AppendLine('')
     }
 
-    if ($Delta.NewCount -gt 0) {
+    if ($Delta['NewCount'] -gt 0) {
         [void]$sb.AppendLine('### New Findings')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('| Control | Category | State |')
         [void]$sb.AppendLine('|---|---|:---:|')
-        foreach ($item in $Delta.NewFindings) {
-            [void]$sb.AppendLine("| $($item.Title) | $($item.Category) | $($item.State) |")
+        foreach ($item in $Delta['NewFindings']) {
+            [void]$sb.AppendLine("| $($item['Title']) | $($item['Category']) | $($item['State']) |")
         }
         [void]$sb.AppendLine('')
     }
