@@ -174,7 +174,11 @@ Profiles are additive — extra flags alongside `-P` expand the profile.
 ### Get Help
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 --help
+# Usage summary
+Get-Help .\Invoke-NLSAssessment.ps1
+
+# Full detail with all parameters
+Get-Help .\Invoke-NLSAssessment.ps1 -Full
 ```
 
 ### Profile Examples
