@@ -44,6 +44,10 @@ function Test-NLSModuleIntegrity {
         Verifies NLS modules against SHA-256 hash manifest and expected path.
         If no manifest exists, performs path-only check and warns.
         Prevents both path-based injection and in-place file tampering.
+    .NOTES
+        Security note: This check runs after module import. It will detect tampering
+        but cannot prevent already-loaded malicious code from executing. To strengthen,
+        verify hashes on disk before Import-Module in the orchestrator.
     #>
     param([string]$ExpectedModulesPath)
 
@@ -67,12 +71,15 @@ function Test-NLSModuleIntegrity {
     # Step 2 -- hash verification against manifest
     $manifestPath = Join-Path $ExpectedModulesPath 'modules.sha256'
     if (Test-Path $manifestPath) {
+        # Warn if manifest is in same directory as modules -- can be co-modified
+        # Ideal deployment: manifest stored outside modules directory or code-signed
         try {
             $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
             $psm1Files = Get-ChildItem -Path $ExpectedModulesPath -Filter '*.psm1' -ErrorAction Stop
 
             foreach ($file in $psm1Files) {
-                $expectedHash = $manifest.($file.Name)
+                $prop = $manifest.PSObject.Properties[$file.Name]
+                $expectedHash = if ($prop) { $prop.Value } else { $null }
                 if (-not $expectedHash) {
                     $warnings += "No hash in manifest for: $($file.Name)"
                     continue
@@ -128,10 +135,20 @@ function Protect-NLSOutputPath {
     .SYNOPSIS
         Validates and locks down the output directory permissions.
         Reduces risk of output tampering on shared systems.
+    .NOTES
+        Security note: ACL is set after directory creation. There is a small TOCTOU window
+        between directory creation and ACL lock. On shared systems, consider pre-creating
+        the output directory with correct permissions before running the assessment.
+        This function is a best-effort control, not a hard guarantee.
     #>
     param([string]$OutputPath)
 
     try {
+        if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+            # Non-Windows: chmod 700 equivalent
+            chmod 700 $OutputPath 2>$null
+            return $true
+        }
         $acl = Get-Acl -Path $OutputPath -ErrorAction Stop
         # Restrict to current user only
         $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -218,11 +235,18 @@ function Register-NLSException {
         [Parameter(Mandatory = $true)][string]$Message,
         [string]$ErrorDetails = ''
     )
+    # Sanitize error details -- strip tokens, passwords, and connection strings
+    # that may appear in exception messages from Graph/EXO cmdlets
+    $safeDetails = $ErrorDetails `
+        -replace 'Bearer\s+[A-Za-z0-9\-._~+/]+=*', 'Bearer [REDACTED_TOKEN]' `
+        -replace 'eyJ[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+', '[REDACTED_JWT]' `
+        -replace 'client_secret=[^&\s]+', 'client_secret=[REDACTED]' `
+        -replace 'password=[^&\s]+', 'password=[REDACTED]'
     $script:Exceptions += [ordered]@{
         Timestamp    = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
         Source       = $Source
         Message      = $Message
-        ErrorDetails = $ErrorDetails
+        ErrorDetails = $safeDetails
     }
 }
 
