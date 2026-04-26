@@ -15,7 +15,7 @@ function Publish-NLSRemediationScript {
         [bool]$Redact = $false
     )
 
-    $findings = @($ScoredResults.Findings | Where-Object { $_.State -in @('Gap', 'Partial') })
+    $findings = @($ScoredResults['Findings'] | Where-Object { $_.State -in @('Gap', 'Partial') })
     $lines    = [System.Collections.Generic.List[string]]::new()
 
     # ── Header ───────────────────────────────────────────────
@@ -51,10 +51,18 @@ function Publish-NLSRemediationScript {
 
     # ── Per finding remediation blocks ───────────────────────
     foreach ($finding in $findings) {
-        $nist  = if ($finding.NIST_SP800_53_r5) { "# NIST: $($finding.NIST_SP800_53_r5)" } else { '' }
-        $hipaa = if ($finding.HIPAA_Current)    { "# HIPAA: $($finding.HIPAA_Current)" }    else { '' }
+        # Sanitize values going into generated script -- strip any PS metacharacters
+        # from data-driven fields to prevent comment-injection in the output file
+        $safeTitle  = ($finding['Title']   -replace '[`$(){}|;&<>]', '') -replace '[
+]', ' '
+        $safeDetail = ($finding['Detail']  -replace '[`$(){}|;&<>]', '') -replace '[
+]', ' '
+        $safeRem    = ($finding['Remediation'] -replace '[
+]', ' ')
+        $nist  = if ($finding['NIST_SP800_53_r5']) { "# NIST: $($finding['NIST_SP800_53_r5'])" } else { '' }
+        $hipaa = if ($finding['HIPAA_Current'])    { "# HIPAA: $($finding['HIPAA_Current'])" }    else { '' }
 
-        switch ($finding.ControlId) {
+        switch ($finding['ControlId']) {
 
             'SmtpClientAuth' {
                 $lines.Add('# ── SMTP Client Authentication ───────────────────────────')
@@ -108,11 +116,11 @@ function Publish-NLSRemediationScript {
                 $lines.Add('# ── Mailbox Auditing ─────────────────────────────────────')
                 if ($nist)  { $lines.Add($nist) }
                 if ($hipaa) { $lines.Add($hipaa) }
-                if ($finding.AffectedObjects -and $finding.AffectedObjects.Count -gt 0) {
-                    $affectedList = $finding.AffectedObjects -join ', '
+                if ($finding['AffectedObjects'] -and $finding['AffectedObjects'].Count -gt 0) {
+                    $affectedList = $finding['AffectedObjects'] -join ', '
                     $lines.Add("# Affected mailboxes: $affectedList")
                     $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Affected Mailboxes", "Enable Auditing")) {')
-                    foreach ($mbx in $finding.AffectedObjects) {
+                    foreach ($mbx in $finding['AffectedObjects']) {
                         $safeMbx = $mbx -replace "'", "''"
                         $lines.Add("    Set-Mailbox -Identity '$safeMbx' -AuditEnabled `$true")
                     }
@@ -144,9 +152,9 @@ function Publish-NLSRemediationScript {
                 $lines.Add('# ── DKIM Signing ─────────────────────────────────────────')
                 $lines.Add('# DNS CNAME records must exist before enabling.')
                 if ($nist) { $lines.Add($nist) }
-                if ($finding.AffectedObjects -and $finding.AffectedObjects.Count -gt 0) {
+                if ($finding['AffectedObjects'] -and $finding['AffectedObjects'].Count -gt 0) {
                     $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Affected Domains", "Enable DKIM")) {')
-                    foreach ($domain in $finding.AffectedObjects) {
+                    foreach ($domain in $finding['AffectedObjects']) {
                         $safeDomain = $domain -replace "'", "''"
                         $lines.Add("    Enable-DkimSigningConfig -Identity '$safeDomain'")
                         $lines.Add("    Write-Host '[+] DKIM enabled for $safeDomain' -ForegroundColor Green")
@@ -163,9 +171,9 @@ function Publish-NLSRemediationScript {
                 $lines.Add('# ── DNSSEC ───────────────────────────────────────────────')
                 $lines.Add('# After enabling, update MX record to p-v1.mx.microsoft endpoint.')
                 if ($nist) { $lines.Add($nist) }
-                if ($finding.AffectedObjects -and $finding.AffectedObjects.Count -gt 0) {
+                if ($finding['AffectedObjects'] -and $finding['AffectedObjects'].Count -gt 0) {
                     $lines.Add('if ($Force -or $PSCmdlet.ShouldProcess("Affected Domains", "Enable DNSSEC")) {')
-                    foreach ($domain in $finding.AffectedObjects) {
+                    foreach ($domain in $finding['AffectedObjects']) {
                         $safeDomain = $domain -replace "'", "''"
                         $lines.Add("    Enable-DnssecForVerifiedDomain -DomainName '$safeDomain'")
                         $lines.Add("    Write-Host '[+] DNSSEC enabled for $safeDomain -- update MX record' -ForegroundColor Green")
@@ -221,11 +229,11 @@ function Publish-NLSRemediationScript {
             }
 
             default {
-                $lines.Add("# ── $($finding.Title) ─────────────────────────────────────")
-                $lines.Add("# State: $($finding.State)")
-                $lines.Add("# $($finding.Detail)")
-                if ($finding.Remediation) {
-                    $lines.Add("# Remediation: $($finding.Remediation)")
+                $lines.Add("# ── $safeTitle ─────────────────────────────────────")
+                $lines.Add("# State: $($finding['State'])")
+                $lines.Add("# $safeDetail")
+                if ($safeRem) {
+                    $lines.Add("# Remediation: $safeRem")
                 }
                 $lines.Add('# Manual action required.')
                 $lines.Add('')
