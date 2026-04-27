@@ -3,7 +3,7 @@
 > NextLayerSec M365 Security Assessment Framework — Version 2
 > Read-only assessment instrument for Exchange Online and Entra ID.
 > Maps findings to NIST SP 800-53 Rev 5, CIS Controls v8.1, HIPAA current rule,
-> HIPAA NPRM proposed rule, and CISA Zero Trust Maturity Model.
+> HIPAA NPRM proposed rule, CISA Zero Trust Maturity Model, and ISO/IEC 27001:2022.
 > Produces structured markdown artifacts with granular finding detail,
 > affected object lists, current state vs recommended comparisons,
 > per-framework recommendation blocks, delta reporting, remediation scripts,
@@ -12,7 +12,7 @@
 [![License](https://img.shields.io/badge/License-CC%20BY--ND%204.0-blue?style=flat-square)](https://creativecommons.org/licenses/by-nd/4.0/)
 [![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?style=flat-square)](https://github.com/PowerShell/PowerShell)
 [![Read Only](https://img.shields.io/badge/Mode-Read--Only-00c853?style=flat-square)]()
-[![Frameworks](https://img.shields.io/badge/Frameworks-NIST%20%7C%20CIS%20%7C%20HIPAA%20%7C%20ZeroTrust-orange?style=flat-square)]()
+[![Frameworks](https://img.shields.io/badge/Frameworks-NIST%20%7C%20CIS%20%7C%20HIPAA%20%7C%20ZeroTrust%20%7C%20ISO%2027001-orange?style=flat-square)]()
 [![Version](https://img.shields.io/badge/Version-2.0.0-white?style=flat-square)]()
 
 ---
@@ -32,13 +32,15 @@
 | Token cache clear | `-ClearToken` fixes stale Graph token scope issues |
 | Full debug mode | `-DebugAll` surfaces complete data flow, scoring traces, and rendering pipeline |
 | onmicrosoft.com exclusion | Microsoft-managed domains excluded from DMARC and MTA-STS scoring |
-| Framework citations | Every finding includes NIST, CIS, and HIPAA citations from dictionary |
+| ISO 27001:2022 framework | Annex A citations on every finding — on by default in Standard, HIPAA, MSP, ZeroTrust, Full profiles (`-ISO`) |
+| Correlation engine | Cross-control attack path analysis — maps exploitable control combinations to MITRE ATT&CK TTPs |
+| Framework citations | Every finding includes NIST, CIS, HIPAA, and ISO 27001:2022 citations from dictionary |
 | Command injection hardening | Identity variables sanitized in generated remediation scripts |
 | Redaction hardening | IPv4, IPv6, UPNs, GUIDs, tenant URLs redacted when `-RedactSensitiveData` |
-| 32 scored controls | Full coverage across Exchange, identity, DNS, CA, and mail flow |
+| 33 scored controls | Full coverage across Exchange, identity, DNS, CA, and mail flow |
 | CA policy inventory | Full policy table with state, MFA grant, legacy auth block, device compliance |
 | User MFA gap analysis | Per-user MFA registration status with admin flagging (`-MFAReport`) |
-| Secure Score integration | Current score, top improvement opportunities (`-SecureScore`) |
+| Secure Score integration | Current score, top improvement opportunities, prioritized roadmap to target (`-SecureScore`) |
 | Admin role inventory | Global Admin count, over-privilege detection (`-AdminRoles`) |
 | Stale account detection | Accounts inactive 90+ days with last sign-in (`-StaleAccounts`) |
 | Guest account inventory | External guest accounts with stale detection (`-GuestInventory`) |
@@ -51,7 +53,7 @@
 
 ## Overview
 
-`Invoke-NLSAssessment` is a precision read-only assessment instrument built for MSP and consulting operations. It connects to Exchange Online and Microsoft Graph, collects security policy configuration and sign-in telemetry, scores 32 controls against the NextLayerSec baseline, and produces structured markdown artifacts mapped to authoritative compliance frameworks.
+`Invoke-NLSAssessment` is a precision read-only assessment instrument built for MSP and consulting operations. It connects to Exchange Online and Microsoft Graph, collects security policy configuration and sign-in telemetry, scores 33 controls against the NextLayerSec baseline, and produces structured markdown artifacts mapped to authoritative compliance frameworks.
 
 **No tenant configuration changes are made at any point.**
 
@@ -65,7 +67,7 @@ Reports follow a BLUF (Bottom Line Up Front) structure designed for both executi
 
 **Section 1 — Executive Summary:** Secure Score, gap/pass counts, and a one-line bottom line. Readers know the tenant's posture in 10 seconds.
 
-**Section 2 — Action Plan:** Gaps and partials only. Each finding shows current state, risk, framework citations, and remediation. PowerShell-executable remediations render as copy-paste code blocks. Portal-only actions are clearly labeled.
+**Section 2 — Action Plan:** Gaps and partials only. Correlation engine findings render first as coordinated attack path analysis mapped to MITRE ATT&CK. Individual findings follow with current state, risk, framework citations, and remediation. PowerShell-executable remediations render as copy-paste code blocks. Portal-only actions are clearly labeled.
 
 **Section 3 — Posture & Telemetry:** Supporting evidence. Identity and privilege summary, admin role table, named locations, CA policy inventory, DNS email record verification (live 8.8.8.8 lookup).
 
@@ -101,7 +103,7 @@ Reports follow a BLUF (Bottom Line Up Front) structure designed for both executi
 
 ### Graph Extended Data (Optional Flags)
 - Per-user MFA registration status with admin flagging (`-MFAReport`)
-- Microsoft Secure Score (`-SecureScore`)
+- Microsoft Secure Score with prioritized roadmap to target score (`-SecureScore`)
 - Admin role inventory — Global Admin count, over-privilege detection (`-AdminRoles`)
 - Stale accounts inactive 90+ days (`-StaleAccounts`)
 - External guest account inventory with stale detection (`-GuestInventory`)
@@ -110,7 +112,7 @@ Reports follow a BLUF (Bottom Line Up Front) structure designed for both executi
 - Security Defaults, authentication methods, consent framework, PIM, break-glass (`-IdentityHardening`)
 - External collaboration — guest invitation policy (`-IdentityHardening`)
 
-### Scored Controls (32 total)
+### Scored Controls (33 total)
 
 | Category | Controls |
 |---|---|
@@ -123,8 +125,20 @@ Reports follow a BLUF (Bottom Line Up Front) structure designed for both executi
 | Email Authentication | DKIM, DMARC |
 | DNS Security | DNSSEC |
 | Conditional Access | AdminMFA, CAPolicy, LegacyAuth, SecurityDefaults, NamedLocations |
-| Identity | AuthMethodsPolicy, ConsentFramework, BreakGlass, UserMFAGap, ExternalCollaboration, GlobalAdminCount |
-| Lifecycle | StaleAccounts |
+| Identity | AuthMethodsPolicy, ConsentFramework, BreakGlass, UserMFAGap, ExternalCollaboration, GlobalAdminCount, StaleAccounts |
+| Shared Mailbox | SharedMailboxSignIn |
+
+### Correlation Engine
+
+The correlation engine runs after individual control scoring and identifies multi-control attack paths — combinations of control gaps that create exploitable chains an attacker could leverage in sequence. Each correlation finding maps to specific MITRE ATT&CK techniques and renders in Section 2 before individual gap findings.
+
+| Rule | Conditions | MITRE TTPs |
+|---|---|---|
+| CORR-001: BEC Attack Path | MFA gap + external forwarding enabled | T1078, T1114, T1566 |
+| CORR-002: Privileged Access Takeover | GA count > 2 + permanent GAs (no PIM) | T1078.004, T1098, T1098.003 |
+| CORR-003: OAuth Persistence | User consent enabled + MFA gap | T1528, T1550.001 |
+| CORR-004: Email Domain Spoofing | DMARC not at p=reject + DKIM gaps | T1566.002, T1598 |
+| CORR-005: Stale Identity Attack Surface | Stale accounts + stale guests + MFA gap | T1078, T1133 |
 
 ---
 
@@ -137,8 +151,9 @@ Reports follow a BLUF (Bottom Line Up Front) structure designed for both executi
 | HIPAA Security Rule | 45 CFR 164.312 current enforceable rule | `-HIPAA` |
 | HIPAA Security Rule NPRM | December 27 2024 proposed rule | `-HIPAAProposed` |
 | CISA Zero Trust Maturity Model | 2023 | `-ZeroTrust` |
+| ISO/IEC 27001 | 2022 (Annex A) | `-ISO` |
 
-**Default behavior:** When no framework flag is passed, `-NIST` is applied automatically.
+**Default behavior:** When no framework flag is passed, `-NIST` is applied automatically. ISO 27001:2022 is on by default in Standard, HIPAA, MSP, ZeroTrust, and Full profiles.
 
 ### HIPAA NPRM Note
 
@@ -159,10 +174,10 @@ The December 2024 NPRM proposes eliminating the required/addressable distinction
 | Profile | Syntax | Frameworks | Features Included |
 |---|---|---|---|
 | Quick | `-P Quick` | NIST | Exchange only, no Graph — fastest triage |
-| Standard | `-P Standard` | NIST, CIS | Full Graph — general purpose assessment |
-| HIPAA | `-P HIPAA` | HIPAA, HIPAAProposed | MFAReport, AdminRoles, DMARC, SharedMailboxes |
-| MSP | `-P MSP` | NIST, CIS | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes, DNSRecords, MailFlowHardening |
-| ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts, IdentityHardening, BreakGlass |
+| Standard | `-P Standard` | NIST, CIS, ISO 27001:2022 | Full Graph — general purpose assessment |
+| HIPAA | `-P HIPAA` | HIPAA, HIPAAProposed, ISO 27001:2022 | MFAReport, AdminRoles, DMARC, SharedMailboxes |
+| MSP | `-P MSP` | NIST, CIS, ISO 27001:2022 | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes, DNSRecords, MailFlowHardening |
+| ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust, ISO 27001:2022 | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts, IdentityHardening, BreakGlass |
 | Full | `-P Full` | All frameworks | All features |
 
 Profiles are additive — extra flags alongside `-P` expand the profile.
@@ -310,11 +325,12 @@ NLS-Assessment/
 |   |-- NLS.Core.psm1                  # Output safety, redaction, integrity, security controls
 |   |-- NLS.Exchange.psm1              # Exchange Online + DMARC + DNS + mail flow hardening
 |   |-- NLS.ConditionalAccess.psm1     # Graph CA, telemetry, MFA, Secure Score, identity hardening
-|   |-- NLS.FrameworkDictionary.psm1   # 32 state-aware compliance citations (data only)
+|   |-- NLS.FrameworkDictionary.psm1   # 33 state-aware compliance citations (data only)
 |   |-- NLS.Scoring.psm1               # Scoring engine with module-level dedup
 |   |-- NLS.Reporting.psm1             # BLUF markdown report generator
 |   |-- NLS.Remediation.psm1           # Remediation script generator
 |   |-- NLS.Delta.psm1                 # Delta comparison and reporting
+|   |-- NLS.Correlation.psm1           # Cross-control attack path analysis engine
 |   `-- modules.sha256                 # SHA-256 hash manifest (generated, not committed)
 |
 |-- output/                            # Assessment artifacts (gitignored)
@@ -338,9 +354,13 @@ NLS-Assessment/
 
 `Add-NLSFinding` is a module-level function in `NLS.Scoring.psm1`. It maintains a `HashSet[string]` of scored ControlIds to prevent duplicates regardless of how many code paths evaluate the same control. Framework citations are looked up at call time from `NLS.FrameworkDictionary.psm1` and attached to each finding. The dictionary is loaded after state reset to prevent initialization order issues.
 
+### Correlation Engine
+
+`NLS.Correlation.psm1` runs after all individual control scores are finalized. It reads the scored findings from the extended data object and evaluates five MITRE ATT&CK-mapped rules against observed control states. Matching rules emit `[ordered]@{}` correlation objects that are injected into the report as an Attack Path Analysis block before standard gap findings. Correlation findings use `CORR-*` identifiers and are excluded from standard gap/partial severity counts.
+
 ### Data and Logic Separation
 
-`NLS.FrameworkDictionary.psm1` contains only compliance mapping data — no execution logic. When a framework releases a new version, only this file changes. All 32 ControlIds have Satisfied, Partial, and Gap states defined for each active framework.
+`NLS.FrameworkDictionary.psm1` contains only compliance mapping data — no execution logic. When a framework releases a new version, only this file changes. All 33 ControlIds have Satisfied, Partial, and Gap states defined for each active framework, including ISO 27001:2022 Annex A citations.
 
 ### DNS Resolution
 
@@ -520,10 +540,11 @@ Run at least one assessment first:
 
 | Framework | Version Mapped | Last Updated |
 |---|---|---|
-| NIST SP 800-53 | Rev 5 Release 5.2.0 | 2026-04-26 |
-| CIS Controls | v8.1 June 2024 | 2026-04-26 |
-| HIPAA Security Rule | 45 CFR 164.312 current enforceable | 2026-04-26 |
-| HIPAA NPRM | December 27 2024 proposed rule | 2026-04-26 |
+| NIST SP 800-53 | Rev 5 Release 5.2.0 | 2026-04-27 |
+| CIS Controls | v8.1 June 2024 | 2026-04-27 |
+| HIPAA Security Rule | 45 CFR 164.312 current enforceable | 2026-04-27 |
+| HIPAA NPRM | December 27 2024 proposed rule | 2026-04-27 |
+| ISO/IEC 27001 | 2022 Annex A | 2026-04-27 |
 
 ---
 
@@ -531,7 +552,8 @@ Run at least one assessment first:
 
 | Version | Date | Notes |
 |---|---|---|
-| 2.0.0 | 2026-04-26 | Production release — 32 scored controls, live DNS via 8.8.8.8, full framework citations, DMARC/MTA-STS onmicrosoft.com exclusion, -DebugAll, delta, portfolio, remediation scripts, SHA-256 integrity |
+| 2.0.0 | 2026-04-27 | ISO 27001:2022 Annex A citations on all 33 controls, correlation engine with 5 MITRE ATT&CK-mapped attack path rules, Secure Score prioritized roadmap, SharedMailboxSignIn control, 33-control full collection coverage |
+| 1.x.x | 2026-04-26 | Production release — 32 scored controls, live DNS via 8.8.8.8, full framework citations, DMARC/MTA-STS onmicrosoft.com exclusion, -DebugAll, delta, portfolio, remediation scripts, SHA-256 integrity |
 | 1.0.0 | 2026-04-24 | Initial release — public repo nextlayersec-assessment |
 
 ---
