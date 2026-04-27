@@ -24,9 +24,9 @@ function Publish-NLSAssessmentSummary {
     $summary  = $ScoredResults.Summary
     $sb       = [System.Text.StringBuilder]::new()
 
-    $gaps     = @($findings | Where-Object { $_['State'] -eq 'Gap' } | Sort-Object { $_['Category'] })
-    $partials = @($findings | Where-Object { $_['State'] -eq 'Partial' } | Sort-Object { $_['Category'] })
-    $passes   = @($findings | Where-Object { $_['State'] -eq 'Satisfied' } | Sort-Object { $_['Category'] })
+    $gaps     = @($findings | Where-Object { $_['State'] -eq 'Gap' -and $_['Category'] -ne 'Attack Path' } | Sort-Object { $_['Category'] })
+    $partials = @($findings | Where-Object { $_['State'] -eq 'Partial' -and $_['Category'] -ne 'Attack Path' } | Sort-Object { $_['Category'] })
+    $passes   = @($findings | Where-Object { $_['State'] -eq 'Satisfied' -and $_['Category'] -ne 'Attack Path' } | Sort-Object { $_['Category'] })
 
     # ── HEADER ───────────────────────────────────────────────
     [void]$sb.AppendLine('# NextLayerSec M365 Security Assessment')
@@ -92,6 +92,27 @@ function Publish-NLSAssessmentSummary {
         [void]$sb.AppendLine('No gaps or partial controls identified. All checks satisfied.')
         [void]$sb.AppendLine('')
     } else {
+        # ── Correlation Attack Paths ──────────────────────────────
+        $corrFindings = @($findings | Where-Object { $_['Category'] -eq 'Attack Path' } | Sort-Object { $_['Severity'] })
+        if ($corrFindings.Count -gt 0) {
+            [void]$sb.AppendLine('### ⚠ Attack Path Analysis')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('> Combined control gaps that create exploitable attack chains. These require coordinated remediation across multiple controls.')
+            [void]$sb.AppendLine('')
+            foreach ($cf in $corrFindings) {
+                if (-not $cf['Title']) { continue }
+                [void]$sb.AppendLine("#### $($cf['ControlId']): $($cf['Title'])")
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine("**Severity:** $($cf['Severity']) | **MITRE:** $($cf['Mitre'])")
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine($cf['Detail'])
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine("**Impact:** $($cf['Impact'])")
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine("**Remediation:** $($cf['Remediation'])")
+                [void]$sb.AppendLine('')
+            }
+        }
         if ($gaps.Count -gt 0) {
             [void]$sb.AppendLine('### High Priority Gaps')
             [void]$sb.AppendLine('')
@@ -123,6 +144,7 @@ function Publish-NLSAssessmentSummary {
                 if ($finding['NIST_SP800_53_r5']) { $fwCitations += "NIST: $($finding['NIST_SP800_53_r5'])" }
                 if ($finding['CIS_v8_1'])         { $fwCitations += "CIS: $($finding['CIS_v8_1'])" }
                 if ($finding['HIPAA_Current'])    { $fwCitations += "HIPAA: $($finding['HIPAA_Current'])" }
+                if ($finding['ISO_27001_2022'])   { $fwCitations += "ISO 27001:2022: $($finding['ISO_27001_2022'])" }
                 if ($fwCitations.Count -gt 0) {
                     [void]$sb.AppendLine("> *$($fwCitations -join ' | ')*")
                     [void]$sb.AppendLine('')
@@ -366,7 +388,6 @@ function Publish-NLSAssessmentSummary {
         $ssCurrent  = $ssData['CurrentScore']
         $ssMax      = $ssData['MaxScore']
         $ssPoints   = $ssData['PointsToTarget']
-        $ssRoadmap  = @($ssData['RoadmapTo80'])
 
         [void]$sb.AppendLine('### Microsoft Secure Score')
         [void]$sb.AppendLine('')
@@ -594,6 +615,7 @@ function Publish-NLSAssessmentSummary {
                 if ($finding['NIST_SP800_53_r5']) { $fwCitations += "NIST: $($finding['NIST_SP800_53_r5'])" }
                 if ($finding['CIS_v8_1'])         { $fwCitations += "CIS: $($finding['CIS_v8_1'])" }
                 if ($finding['HIPAA_Current'])    { $fwCitations += "HIPAA: $($finding['HIPAA_Current'])" }
+                if ($finding['ISO_27001_2022'])   { $fwCitations += "ISO 27001:2022: $($finding['ISO_27001_2022'])" }
                 if ($fwCitations.Count -gt 0) {
                     [void]$sb.AppendLine("  *$($fwCitations -join ' | ')*")
                 }
