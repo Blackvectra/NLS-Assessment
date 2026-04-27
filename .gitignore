@@ -1,12 +1,22 @@
-# Assessment artifacts -- never commit client data
+# Assessment output artifacts -- never commit client data
 output/
+*.md
+!README.md
 
-# PowerShell session files
+# Hash manifest -- auto-generated each run, not committed
+Modules/modules.sha256
+
+# PowerShell session artifacts
 *.ps1xml
-
-# macOS
-.DS_Store
+*.psd1.bak
 
 # Windows
 Thumbs.db
 desktop.ini
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Logs
+*.log
