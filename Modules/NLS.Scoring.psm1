@@ -81,6 +81,14 @@ function Add-NLSFinding {
                     $finding['HIPAA_Proposed_Detail'] = $hipaaProposedEntry['Detail']
                 }
             }
+            if ($fw.ISO -and $entry['ISO']) {
+                $isoEntry = $entry['ISO'][$State]
+                if ($null -ne $isoEntry -and ($isoEntry -is [hashtable] -or $isoEntry -is [System.Collections.Specialized.OrderedDictionary])) {
+                    $finding['ISO_27001_2022'] = $isoEntry['Citation']
+                    $finding['ISO_Req']        = $isoEntry['Requirement']
+                    $finding['ISO_Detail']     = $isoEntry['Detail']
+                }
+            }
         } catch {
             # Non-fatal -- log to exceptions, surface to console only in debug mode
             if ($script:nlsDebug) {
@@ -106,6 +114,7 @@ function Invoke-NLSScoringModel {
         [bool]$HIPAA         = $false,
         [bool]$HIPAAProposed = $false,
         [bool]$ZeroTrust     = $false,
+        [bool]$ISO           = $false,
         [bool]$DebugMode     = $false
     )
 
@@ -115,7 +124,7 @@ function Invoke-NLSScoringModel {
     if ($script:addedControls) { [void]$script:addedControls.Clear() }
     $script:findings      = [System.Collections.Generic.List[hashtable]]::new()
     $script:addedControls = [System.Collections.Generic.HashSet[string]]::new()
-    $script:nlsFrameworks = @{ NIST = $NIST; CIS = $CIS; HIPAA = $HIPAA; HIPAAProposed = $HIPAAProposed; ZeroTrust = $ZeroTrust }
+    $script:nlsFrameworks = @{ NIST = $NIST; CIS = $CIS; HIPAA = $HIPAA; HIPAAProposed = $HIPAAProposed; ZeroTrust = $ZeroTrust; ISO = $ISO }
     $script:nlsDebug      = $DebugMode
 
     # Load dictionary AFTER reset so it is not wiped
@@ -421,11 +430,6 @@ function Invoke-NLSScoringModel {
             if ($ud['Policy'] -eq 'none')    { $nonePolicy++ }
         }
 
-        if ($script:nlsDebug) {
-            Write-Host "  [DMARC-DEBUG] AllDomains=$($allDmarcDomains.Count) UserDomains=$total Missing=$missing Quarantine=$quarantine" -ForegroundColor Cyan
-        }
-
-
         if ($missing -eq 0 -and $enforced -eq $total) {
             Add-NLSFinding -ControlId 'DMARC' -State 'Satisfied' `
                 -Detail "DMARC at p=reject on all $total domain(s). onmicrosoft.com excluded." `
@@ -495,7 +499,6 @@ function Invoke-NLSScoringModel {
             $malware    = $mfData['MalwareFilter']
             $mAction    = $malware['Action']
             $mZap       = $malware['ZapEnabled']
-            $mHardened  = ($mAction -in @('DeleteMessage','Quarantine','')) -and $mZap
             # Empty action means EXO is using default (DeleteMessage) -- treat as hardened
             $mSatisfied = ($mAction -eq '' -or $mAction -eq 'DeleteMessage') -and $mZap
             if ($mSatisfied -or $malware['Hardened']) {
@@ -742,6 +745,7 @@ function Invoke-NLSScoringModel {
             HIPAA         = $HIPAA
             HIPAAProposed = $HIPAAProposed
             ZeroTrust     = $ZeroTrust
+            ISO           = $ISO
         }
         DictionaryVersion = Get-NLSDictionaryVersion
     }
