@@ -50,7 +50,6 @@ function Invoke-NLSCorrelationEngine {
     $mfaData    = $ExtendedData['UserMFAStatus']
     $pimData    = $ExtendedData['PIM']
     $adminData  = $ExtendedData['AdminRoleInventory']
-    $caData     = $ExtendedData['ConditionalAccess']
     $guestData  = $ExtendedData['GuestAccountInventory']
     $staleData  = $ExtendedData['StaleAccounts']
 
@@ -58,7 +57,6 @@ function Invoke-NLSCorrelationEngine {
     $gaCount     = if ($adminData) { [int]$adminData['GlobalAdminCount'] }       else { 0 }
     $permGAs     = if ($pimData)   { [int]$pimData['PermanentGlobalAdminCount'] } else { 0 }
     $staleCount  = if ($staleData) { [int]$staleData['StaleCount'] }             else { 0 }
-    $guestCount  = if ($guestData) { [int]$guestData['TotalGuests'] }            else { 0 }
     $staleGuests = if ($guestData) { [int]$guestData['StaleGuests'] }            else { 0 }
     $legacyAttempts = if ($ExtendedData['ConditionalAccessTelemetry']) {
         [int]$ExtendedData['ConditionalAccessTelemetry']['LegacyAuthAttempts']
@@ -72,7 +70,6 @@ function Invoke-NLSCorrelationEngine {
     $legacyEnabled   = IsGap 'LegacyAuth'
     $mfaGap          = (IsGap 'UserMFAGap') -or ($noMFACount -gt 0)
     $forwardingGap   = IsGap 'ExternalForwarding'
-    $outboundGap     = IsGap 'OutboundSpam'
 
     if ($legacyEnabled -and $mfaGap -and $forwardingGap) {
         $severity = 'Critical'
@@ -186,7 +183,6 @@ function Invoke-NLSCorrelationEngine {
     # ─────────────────────────────────────────────────────────────────────────
     $dmarcGap  = IsPartial 'DMARC'
     $dkimGap   = IsPartial 'DKIM'
-    $mtaStsGap = IsGap 'MTASTS'
 
     if ($dmarcGap -and $dkimGap) {
         $severity = 'High'
