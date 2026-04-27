@@ -10,6 +10,7 @@
 #   CIS:          Controls v8.1 June 2024 (cisecurity.org)
 #   HIPAA:        Security Rule 45 CFR 164.312 current enforceable rule
 #   HIPAAProposed: NPRM December 27 2024 -- expected final May 2026
+#   ISO:          ISO/IEC 27001:2022 Annex A controls (iso.org)
 #
 # HIPAA NPRM note:
 #   Proposed rule eliminates required/addressable distinction.
@@ -67,6 +68,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.312(a)(2)(ix), §164.312(d)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'No MFA. Proposed rule introduces §164.312(a)(2)(ix) as an explicit MFA requirement. Critical gap against the incoming mandatory standard.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.5'; Requirement = 'Applicable'
+                Detail = 'MFA for privileged accounts satisfies A.8.5 Secure Authentication.' }
+            Partial = @{ Citation = 'A.8.5'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.5. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.5'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.5 requires this control to be implemented.' }
+        }
     }
 
     LegacyAuth = @{
@@ -103,6 +113,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'Partial legacy auth blocking. Proposed rule removes addressable flexibility -- remaining legacy auth exposure is a mandatory compliance gap.' }
             Gap = @{ Citation = '§164.312(a)(2)(i), §164.312(d), §164.312(a)(2)(ix)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'Legacy auth active. Under proposed rule this gaps against mandatory person authentication and the new explicit MFA requirement at §164.312(a)(2)(ix).' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.5, A.5.15'; Requirement = 'Applicable'
+                Detail = 'Blocking legacy authentication satisfies A.8.5 Secure Authentication and A.5.15 Access Control policy.' }
+            Partial = @{ Citation = 'A.8.5, A.5.15'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.5, A.5.15. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.5, A.5.15'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.5, A.5.15 requires this control to be implemented.' }
         }
     }
 
@@ -141,6 +160,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.312(e)(1), §164.312(e)(2)(ii)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'SMTP client auth enabled. Under proposed rule transmission security is mandatory with no addressable flexibility. Direct compliance gap against the incoming standard.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.5, A.8.21'; Requirement = 'Applicable'
+                Detail = 'Disabling SMTP AUTH satisfies A.8.5 Secure Authentication and A.8.21 Security of Network Services.' }
+            Partial = @{ Citation = 'A.8.5, A.8.21'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.5, A.8.21. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.5, A.8.21'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.5, A.8.21 requires this control to be implemented.' }
+        }
     }
 
     ExternalForwarding = @{
@@ -177,6 +205,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'Partial. Proposed rule removes addressable flexibility from access control specifications. Individual mailbox forwarding gaps must be remediated.' }
             Gap = @{ Citation = '§164.312(a)(1), §164.308(a)(4)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'External forwarding enabled. Under proposed rule access control is fully mandatory. Uncontrolled external forwarding of ePHI is a mandatory compliance gap.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.15, A.8.20'; Requirement = 'Applicable'
+                Detail = 'Blocking auto-forwarding enforces A.5.15 Access Control and A.8.20 Networks Security.' }
+            Partial = @{ Citation = 'A.5.15, A.8.20'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.5.15, A.8.20. Review control configuration.' }
+            Gap = @{ Citation = 'A.5.15, A.8.20'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.5.15, A.8.20 requires this control to be implemented.' }
         }
     }
 
@@ -215,6 +252,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.312(b)'; Requirement = 'Required'
                 Detail = 'Mailbox auditing disabled. §164.312(b) is required under both current and proposed rules. Proposed rule adds no flexibility -- mandatory compliance failure.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.15'; Requirement = 'Applicable'
+                Detail = 'Mailbox audit logging satisfies A.8.15 Logging.' }
+            Partial = @{ Citation = 'A.8.15'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.15. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.15'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.15 requires this control to be implemented.' }
+        }
     }
 
     UnifiedAuditLog = @{
@@ -251,6 +297,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'Partial. Proposed rule strengthens audit requirements with no addressable flexibility. Gaps in unified audit log coverage are mandatory compliance failures.' }
             Gap = @{ Citation = '§164.312(b)'; Requirement = 'Required'
                 Detail = 'Unified audit logging disabled. Proposed rule makes all audit control specifications mandatory. Critical compliance gap against the incoming standard.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.15, A.8.16'; Requirement = 'Applicable'
+                Detail = 'Unified audit logging satisfies A.8.15 Logging and A.8.16 Monitoring Activities.' }
+            Partial = @{ Citation = 'A.8.15, A.8.16'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.15, A.8.16. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.15, A.8.16'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.15, A.8.16 requires this control to be implemented.' }
         }
     }
 
@@ -289,6 +344,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.312(a)(2)(i), §164.312(e)(1)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'POP3 enabled. Under proposed rule this gaps against mandatory authentication and transmission security requirements. No addressable alternative available.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.21, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Disabling POP3 satisfies A.8.21 Security of Network Services and A.8.5 Secure Authentication.' }
+            Partial = @{ Citation = 'A.8.21, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.21, A.8.5. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.21, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.21, A.8.5 requires this control to be implemented.' }
+        }
     }
 
     ImapEnabled = @{
@@ -325,6 +389,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'IMAP not fully disabled. Proposed rule removes addressable flexibility. Remaining IMAP exposure against ePHI mailboxes is a mandatory compliance gap.' }
             Gap = @{ Citation = '§164.312(a)(2)(i), §164.312(e)(1)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'IMAP enabled. Proposed rule makes legacy protocol exposure a mandatory compliance gap with no addressable alternative pathway.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.21, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Disabling IMAP satisfies A.8.21 Security of Network Services and A.8.5 Secure Authentication.' }
+            Partial = @{ Citation = 'A.8.21, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.21, A.8.5. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.21, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.21, A.8.5 requires this control to be implemented.' }
         }
     }
 
@@ -363,6 +436,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.308(a)(1)(ii)(B), §164.308(a)(5)(ii)(B)'; Requirement = 'Required'
                 Detail = 'Safe Attachments not enabled. Proposed rule makes malware protection mandatory with enhanced specificity. Critical gap against the incoming standard.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Safe Attachments satisfies A.8.7 Protection Against Malware.' }
+            Partial = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.7. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.7 requires this control to be implemented.' }
+        }
     }
 
     SafeLinks = @{
@@ -399,6 +481,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'Partial Safe Links coverage. Proposed rule removes addressable flexibility from malware protection. Coverage gaps are mandatory compliance failures.' }
             Gap = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'Safe Links not enabled. Proposed rule makes phishing and malware protection mandatory. URL scanning is a required control under the incoming standard.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Safe Links satisfies A.8.7 Protection Against Malware.' }
+            Partial = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.7. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.7 requires this control to be implemented.' }
         }
     }
 
@@ -437,6 +528,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Required'
                 Detail = 'Anti-phishing not enabled. Proposed rule makes phishing protection mandatory with no addressable alternative. Critical gap against the incoming standard.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Anti-phishing policy satisfies A.8.7 Protection Against Malware.' }
+            Partial = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.7. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.7 requires this control to be implemented.' }
+        }
     }
 
     MailboxIntelligence = @{
@@ -473,6 +573,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'Partial mailbox intelligence. Proposed rule removes addressable flexibility. Gaps in impersonation detection are mandatory compliance failures.' }
             Gap = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'Mailbox intelligence disabled. Under proposed rule malware and phishing protection is mandatory and comprehensive. Disabling behavioral intelligence is a compliance gap.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Mailbox intelligence satisfies A.8.7 Protection Against Malware.' }
+            Partial = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.7. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.7 requires this control to be implemented.' }
         }
     }
 
@@ -511,6 +620,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'ZAP for spam disabled. Proposed rule makes threat protection mandatory. Disabling retroactive spam removal is a compliance gap against the enhanced mandatory standard.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Zero-Hour Auto Purge satisfies A.8.7 Protection Against Malware.' }
+            Partial = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.7. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.7 requires this control to be implemented.' }
+        }
     }
 
     ZAPPhish = @{
@@ -547,6 +665,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'Partial ZAP phishing coverage. Proposed rule makes phishing protection mandatory and comprehensive. Gaps are mandatory compliance failures under the incoming standard.' }
             Gap = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Required'
                 Detail = 'ZAP for phishing disabled. Proposed rule makes phishing protection mandatory with no addressable flexibility. Critical compliance gap against the incoming standard.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Zero-Hour Auto Purge for phishing satisfies A.8.7 Protection Against Malware.' }
+            Partial = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.7. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.7 requires this control to be implemented.' }
         }
     }
 
@@ -585,6 +712,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.308(a)(5)(ii)(B), §164.312(c)(1)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'ATP not enabled for collaboration. Proposed rule makes malware protection mandatory across all platforms. Critical gap against the incoming mandatory standard.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'ATP for SharePoint/Teams/OneDrive satisfies A.8.7 Protection Against Malware.' }
+            Partial = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.7. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.7 requires this control to be implemented.' }
+        }
     }
 
     DKIM = @{
@@ -621,6 +757,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'DKIM not on all domains. Proposed rule makes transmission security mandatory. Domains transmitting ePHI without DKIM are mandatory compliance gaps.' }
             Gap = @{ Citation = '§164.312(e)(1), §164.312(e)(2)(ii)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'DKIM disabled. Proposed rule makes email transmission security mandatory with no addressable alternative. Direct gap against the incoming mandatory standard.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'DKIM signing satisfies A.8.24 Use of Cryptography for message authentication.' }
+            Partial = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.24. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.24 requires this control to be implemented.' }
         }
     }
 
@@ -659,6 +804,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.312(e)(1)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'DNSSEC not enabled. Proposed rule makes transmission security mandatory with no addressable alternative. DNSSEC absence is a compliance gap against the incoming standard.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.21'; Requirement = 'Applicable'
+                Detail = 'DNSSEC satisfies A.8.21 Security of Network Services.' }
+            Partial = @{ Citation = 'A.8.21'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.21. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.21'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.21 requires this control to be implemented.' }
+        }
     }
 
     CAPolicy = @{
@@ -696,6 +850,15 @@ $script:FrameworkDictionary = @{
             Gap = @{ Citation = '§164.312(a)(1), §164.312(a)(2)(i), §164.312(a)(2)(ix), §164.312(d)'; Requirement = 'Required -- NPRM eliminates addressable distinction'
                 Detail = 'No enforced CA policies. Proposed rule makes access control and MFA mandatory across all ePHI systems. Absence of enforced CA policies is a critical compliance gap.' }
         }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.15, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Conditional Access satisfies A.5.15 Access Control and A.8.5 Secure Authentication.' }
+            Partial = @{ Citation = 'A.5.15, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.5.15, A.8.5. Review control configuration.' }
+            Gap = @{ Citation = 'A.5.15, A.8.5'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.5.15, A.8.5 requires this control to be implemented.' }
+        }
     }
 
     OutboundSpam = @{
@@ -732,6 +895,15 @@ $script:FrameworkDictionary = @{
                 Detail = 'Notification enabled but recipient not configured. Proposed rule strengthens incident response -- non-functional alerting is a compliance gap under proposed standard.' }
             Gap = @{ Citation = '§164.308(a)(6)(ii), §164.308(a)(1)(ii)(D)'; Requirement = 'Required'
                 Detail = 'Outbound spam notification disabled. Proposed rule makes incident response and monitoring mandatory and more specific. Compliance gap against the incoming standard.' }
+        }
+    
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.16'; Requirement = 'Applicable'
+                Detail = 'Outbound spam notification satisfies A.8.16 Monitoring Activities.' }
+            Partial = @{ Citation = 'A.8.16'; Requirement = 'Applicable'
+                Detail = 'Partially satisfies A.8.16. Review control configuration.' }
+            Gap = @{ Citation = 'A.8.16'; Requirement = 'Applicable'
+                Detail = 'Control gap. A.8.16 requires this control to be implemented.' }
         }
     }
 }
@@ -975,6 +1147,347 @@ $script:DictionaryVersion = [ordered]@{
     CIS           = 'CIS Controls v8.1 June 2024'
     HIPAA         = 'HIPAA Security Rule 45 CFR 164.312 current enforceable rule'
     HIPAAProposed = 'HIPAA Security Rule NPRM December 27 2024 proposed rule -- expected final May 2026'
+    DMARC = @{
+        Title    = 'Enforce DMARC policy to p=reject'
+        Category = 'Email Authentication'
+        NIST = @{
+            Satisfied = @{ Citation = 'SI-8, SC-5'; Requirement = 'Required'
+                Detail = 'DMARC at p=reject satisfies SI-8 Spam Protection and SC-5 Denial of Service Protection by preventing domain spoofing.' }
+            Partial = @{ Citation = 'SI-8, SC-5'; Requirement = 'Required'
+                Detail = 'DMARC at p=quarantine is partial. p=reject is required to fully satisfy SI-8 and prevent domain impersonation.' }
+            Gap = @{ Citation = 'SI-8, SC-5, IA-9'; Requirement = 'Required'
+                Detail = 'No DMARC enforcement. SI-8 requires spam protection. IA-9 requires service authentication including email authentication.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '9.1'; Requirement = 'IG1'
+                Detail = 'DMARC at p=reject satisfies CIS 9.1 Ensure Usage of DNS-Based Email Sender Authentication.' }
+            Partial = @{ Citation = '9.1'; Requirement = 'IG1'
+                Detail = 'DMARC at p=quarantine partially satisfies CIS 9.1. Advance to p=reject after aggregate report review.' }
+            Gap = @{ Citation = '9.1'; Requirement = 'IG1'
+                Detail = 'DMARC not configured or at p=none. CIS 9.1 requires domain-based message authentication enforcement.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.312(e)(1), §164.312(e)(2)(ii)'; Requirement = 'Required'
+                Detail = 'DMARC enforcement satisfies §164.312(e)(1) Transmission Security and §164.312(e)(2)(ii) Encryption and Decryption of ePHI in transit.' }
+            Partial = @{ Citation = '§164.312(e)(1)'; Requirement = 'Required'
+                Detail = 'Partial DMARC enforcement. §164.312(e)(1) requires measures against unauthorized interception.' }
+            Gap = @{ Citation = '§164.312(e)(1)'; Requirement = 'Required'
+                Detail = 'No DMARC policy. §164.312(e)(1) Transmission Security requires technical security measures for ePHI.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'DMARC at p=reject satisfies A.8.24 Use of Cryptography for email authentication.' }
+            Partial = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'Partial DMARC enforcement. Advance to p=reject to fully satisfy A.8.24.' }
+            Gap = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'No DMARC policy. A.8.24 requires cryptographic controls for data integrity.' }
+        }
+    }
+
+    SecurityDefaults = @{
+        Title    = 'Disable Security Defaults when Conditional Access is active'
+        Category = 'Conditional Access'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-3, IA-2'; Requirement = 'Required'
+                Detail = 'Security Defaults disabled with CA active satisfies AC-3 Access Enforcement and IA-2 Identification and Authentication via granular policy control.' }
+            Gap = @{ Citation = 'AC-3, IA-2'; Requirement = 'Required'
+                Detail = 'Security Defaults and Conditional Access cannot coexist. Security Defaults must be disabled when CA policies are deployed.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '6.7'; Requirement = 'IG2'
+                Detail = 'Disabling Security Defaults allows CIS 6.7 Centralize Access Control enforcement via Conditional Access.' }
+            Gap = @{ Citation = '6.7'; Requirement = 'IG2'
+                Detail = 'Security Defaults conflict with CIS 6.7 Centralize Access Control. Disable to allow CA policy enforcement.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.15'; Requirement = 'Applicable'
+                Detail = 'CA-controlled access satisfies A.5.15 Access Control policy enforcement.' }
+            Gap = @{ Citation = 'A.5.15'; Requirement = 'Applicable'
+                Detail = 'Security Defaults prevent granular access control required by A.5.15.' }
+        }
+    }
+
+    AuthMethodsPolicy = @{
+        Title    = 'Enable strong authentication methods'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'IA-2, IA-5'; Requirement = 'Required'
+                Detail = 'Strong auth methods (FIDO2, Authenticator) satisfy IA-2 Identification and Authentication and IA-5 Authenticator Management.' }
+            Gap = @{ Citation = 'IA-2, IA-5'; Requirement = 'Required'
+                Detail = 'Phishing-resistant methods not enabled. IA-5 requires management of authenticators including enforcement of strong methods.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '6.3, 6.5'; Requirement = 'IG1'
+                Detail = 'Strong authentication methods satisfy CIS 6.3 and 6.5 MFA requirements.' }
+            Gap = @{ Citation = '6.3'; Requirement = 'IG1'
+                Detail = 'Strong methods not configured. CIS 6.3 requires phishing-resistant MFA where available.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.5'; Requirement = 'Applicable'
+                Detail = 'FIDO2/Authenticator satisfy A.8.5 Secure Authentication requirements.' }
+            Gap = @{ Citation = 'A.8.5'; Requirement = 'Applicable'
+                Detail = 'Strong methods not enabled. A.8.5 requires secure authentication mechanisms.' }
+        }
+    }
+
+    ConsentFramework = @{
+        Title    = 'Disable user consent to applications'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-3, CM-7'; Requirement = 'Required'
+                Detail = 'Admin-only consent satisfies AC-3 Access Enforcement and CM-7 Least Functionality by preventing unauthorized app access to tenant data.' }
+            Gap = @{ Citation = 'AC-3, CM-7'; Requirement = 'Required'
+                Detail = 'User consent enabled. AC-3 requires access enforcement. CM-7 requires least functionality -- user consent grants implicit access to org data.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.4'; Requirement = 'IG1'
+                Detail = 'Admin consent satisfies CIS 5.4 Restrict Administrator Privileges to Dedicated Administrator Accounts.' }
+            Gap = @{ Citation = '5.4'; Requirement = 'IG1'
+                Detail = 'User consent exposes tenant data to unreviewed applications. CIS 5.4 requires restriction of privilege grants.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.15, A.8.2'; Requirement = 'Applicable'
+                Detail = 'Admin consent satisfies A.5.15 Access Control and A.8.2 Privileged Access Rights.' }
+            Gap = @{ Citation = 'A.5.15, A.8.2'; Requirement = 'Applicable'
+                Detail = 'User consent violates A.5.15 and A.8.2 by granting unreviewed application access.' }
+        }
+    }
+
+    BreakGlass = @{
+        Title    = 'Configure break-glass emergency access account'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'CP-2, AC-2'; Requirement = 'Required'
+                Detail = 'Break-glass excluded from CA satisfies CP-2 Contingency Plan and AC-2 Account Management for emergency access continuity.' }
+            Gap = @{ Citation = 'CP-2, AC-2'; Requirement = 'Required'
+                Detail = 'No break-glass or not excluded from CA. CP-2 requires contingency planning. Loss of admin access during CA failure has no recovery path.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.2'; Requirement = 'IG1'
+                Detail = 'Break-glass account satisfies CIS 5.2 Use Unique Passwords for emergency access continuity.' }
+            Gap = @{ Citation = '5.2'; Requirement = 'IG1'
+                Detail = 'No emergency access account. CIS 5.2 and operational continuity require dedicated emergency credentials.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.312(a)(2)(ii)'; Requirement = 'Required'
+                Detail = 'Break-glass satisfies §164.312(a)(2)(ii) Emergency Access Procedure for ePHI systems.' }
+            Gap = @{ Citation = '§164.312(a)(2)(ii)'; Requirement = 'Required'
+                Detail = 'No emergency access procedure. §164.312(a)(2)(ii) requires documented emergency access to ePHI.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.2'; Requirement = 'Applicable'
+                Detail = 'Break-glass satisfies A.8.2 Privileged Access Rights for emergency continuity.' }
+            Gap = @{ Citation = 'A.8.2'; Requirement = 'Applicable'
+                Detail = 'No emergency access. A.8.2 requires managed privileged access including emergency scenarios.' }
+        }
+    }
+
+    UserMFAGap = @{
+        Title    = 'Ensure all users have MFA registered'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'IA-2(1), IA-5'; Requirement = 'Required'
+                Detail = 'All users MFA-registered satisfies IA-2(1) and IA-5 authenticator management requirements.' }
+            Gap = @{ Citation = 'IA-2(1), IA-5'; Requirement = 'Required'
+                Detail = 'Users without MFA cannot satisfy CA policy grant controls. IA-2(1) requires MFA. IA-5 requires authenticator management.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '6.3, 6.5'; Requirement = 'IG1'
+                Detail = 'All users MFA-registered satisfies CIS 6.3 and 6.5.' }
+            Gap = @{ Citation = '6.3, 6.5'; Requirement = 'IG1'
+                Detail = 'Unregistered users bypass MFA CA policies. CIS 6.3 requires MFA for all users.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.312(d)'; Requirement = 'Required'
+                Detail = 'All users with MFA satisfies §164.312(d) Person or Entity Authentication.' }
+            Gap = @{ Citation = '§164.312(d)'; Requirement = 'Required'
+                Detail = 'Unregistered users cannot satisfy §164.312(d) authentication requirements for ePHI access.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.5, A.5.16'; Requirement = 'Applicable'
+                Detail = 'All users MFA-registered satisfies A.8.5 Secure Authentication and A.5.16 Identity Management.' }
+            Gap = @{ Citation = 'A.8.5, A.5.16'; Requirement = 'Applicable'
+                Detail = 'Users without MFA violate A.8.5 and A.5.16 authentication requirements.' }
+        }
+    }
+
+    ExternalCollaboration = @{
+        Title    = 'Restrict guest invitation permissions'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-2, AC-3'; Requirement = 'Required'
+                Detail = 'Restricted guest invitations satisfy AC-2 Account Management and AC-3 Access Enforcement.' }
+            Partial = @{ Citation = 'AC-2'; Requirement = 'Required'
+                Detail = 'Guest invitations partially restricted. Review policy to ensure only authorized roles can invite external users.' }
+            Gap = @{ Citation = 'AC-2, AC-3'; Requirement = 'Required'
+                Detail = 'All members can invite guests. AC-2 requires managed external account provisioning.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.4'; Requirement = 'IG1'
+                Detail = 'Restricted invitations satisfy CIS 5.4 access control requirements.' }
+            Gap = @{ Citation = '5.4'; Requirement = 'IG1'
+                Detail = 'Open guest invitations violate CIS 5.4 access restriction requirements.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.308(a)(4)'; Requirement = 'Required'
+                Detail = 'Restricted guest access satisfies §164.308(a)(4) Information Access Management.' }
+            Gap = @{ Citation = '§164.308(a)(4)'; Requirement = 'Required'
+                Detail = 'Open guest invitations risk unauthorized ePHI access. §164.308(a)(4) requires information access management.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.15, A.6.7'; Requirement = 'Applicable'
+                Detail = 'Restricted invitations satisfy A.5.15 Access Control and A.6.7 Remote Working.' }
+            Gap = @{ Citation = 'A.5.15'; Requirement = 'Applicable'
+                Detail = 'Open guest invitations violate A.5.15 Access Control policy.' }
+        }
+    }
+
+    GlobalAdminCount = @{
+        Title    = 'Limit Global Administrator count to 2 or fewer'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-6, AC-2'; Requirement = 'Required'
+                Detail = '2 or fewer GAs satisfies AC-6 Least Privilege and AC-2 Account Management for privileged account minimization.' }
+            Gap = @{ Citation = 'AC-6, AC-2'; Requirement = 'Required'
+                Detail = 'Excessive GA count violates AC-6 Least Privilege. Each GA is a full-tenant compromise path.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.4'; Requirement = 'IG1'
+                Detail = 'Minimal GA count satisfies CIS 5.4 Restrict Administrator Privileges.' }
+            Gap = @{ Citation = '5.4'; Requirement = 'IG1'
+                Detail = 'GA sprawl violates CIS 5.4. Excess privileged accounts expand the attack surface.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.308(a)(3)(ii)(B)'; Requirement = 'Addressable'
+                Detail = 'Minimal GA count satisfies §164.308(a)(3)(ii)(B) Workforce Clearance Procedure.' }
+            Gap = @{ Citation = '§164.308(a)(3)(ii)(B)'; Requirement = 'Addressable'
+                Detail = 'Excess GAs violate §164.308(a)(3)(ii)(B) by granting unnecessary access to ePHI systems.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.18, A.8.2'; Requirement = 'Applicable'
+                Detail = 'Minimal GA count satisfies A.5.18 Access Rights and A.8.2 Privileged Access Rights.' }
+            Gap = @{ Citation = 'A.5.18, A.8.2'; Requirement = 'Applicable'
+                Detail = 'GA sprawl violates A.5.18 and A.8.2. Privileged access must be minimized and reviewed.' }
+        }
+    }
+
+    StaleAccounts = @{
+        Title    = 'Disable or remove stale user accounts'
+        Category = 'Identity'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-2'; Requirement = 'Required'
+                Detail = 'No stale accounts satisfies AC-2 Account Management including account review, disabling, and removal.' }
+            Partial = @{ Citation = 'AC-2'; Requirement = 'Required'
+                Detail = 'Stale accounts detected. AC-2 requires periodic account review and disabling of inactive accounts.' }
+            Gap = @{ Citation = 'AC-2'; Requirement = 'Required'
+                Detail = 'Stale accounts present. AC-2 requires disabling accounts inactive beyond defined thresholds.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '5.3'; Requirement = 'IG1'
+                Detail = 'No stale accounts satisfies CIS 5.3 Disable Dormant Accounts.' }
+            Gap = @{ Citation = '5.3'; Requirement = 'IG1'
+                Detail = 'Stale accounts violate CIS 5.3. Dormant accounts are a lateral movement and persistence vector.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.308(a)(3)(ii)(C)'; Requirement = 'Addressable'
+                Detail = 'No stale accounts satisfies §164.308(a)(3)(ii)(C) Termination Procedures for workforce members.' }
+            Gap = @{ Citation = '§164.308(a)(3)(ii)(C)'; Requirement = 'Addressable'
+                Detail = 'Stale accounts indicate incomplete termination procedures under §164.308(a)(3)(ii)(C).' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.16'; Requirement = 'Applicable'
+                Detail = 'No stale accounts satisfies A.5.16 Identity Management including identity lifecycle management.' }
+            Gap = @{ Citation = 'A.5.16'; Requirement = 'Applicable'
+                Detail = 'Stale accounts violate A.5.16 Identity Management. Inactive identities must be deprovisioned.' }
+        }
+    }
+
+    MTASTS = @{
+        Title    = 'Publish MTA-STS policy for all domains'
+        Category = 'Mail Flow'
+        NIST = @{
+            Satisfied = @{ Citation = 'SC-8'; Requirement = 'Required'
+                Detail = 'MTA-STS published satisfies SC-8 Transmission Confidentiality and Integrity by enforcing TLS for inbound SMTP.' }
+            Gap = @{ Citation = 'SC-8'; Requirement = 'Required'
+                Detail = 'No MTA-STS. SC-8 requires transmission protection. SMTP downgrade attacks bypass TLS without MTA-STS enforcement.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '9.1'; Requirement = 'IG1'
+                Detail = 'MTA-STS satisfies CIS 9.1 email sender authentication and transmission security.' }
+            Gap = @{ Citation = '9.1'; Requirement = 'IG1'
+                Detail = 'No MTA-STS. CIS 9.1 requires email transmission security controls.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'MTA-STS satisfies A.8.24 Use of Cryptography for email transmission.' }
+            Gap = @{ Citation = 'A.8.24'; Requirement = 'Applicable'
+                Detail = 'No MTA-STS. A.8.24 requires cryptographic controls for data transmission.' }
+        }
+    }
+
+    NamedLocations = @{
+        Title    = 'Define named locations for Zero Trust network segmentation'
+        Category = 'Conditional Access'
+        NIST = @{
+            Satisfied = @{ Citation = 'AC-17, SC-7'; Requirement = 'Required'
+                Detail = 'Named locations satisfy AC-17 Remote Access and SC-7 Boundary Protection by defining network trust zones.' }
+            Gap = @{ Citation = 'AC-17, SC-7'; Requirement = 'Required'
+                Detail = 'No named locations. CA policies cannot enforce network-based conditions. AC-17 and SC-7 require defined network boundaries.' }
+        }
+        CIS = @{
+            Satisfied = @{ Citation = '6.7'; Requirement = 'IG2'
+                Detail = 'Named locations satisfy CIS 6.7 Centralize Access Control with network segmentation.' }
+            Gap = @{ Citation = '6.7'; Requirement = 'IG2'
+                Detail = 'No named locations. CIS 6.7 requires network-aware access control policies.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.5.15'; Requirement = 'Applicable'
+                Detail = 'Named locations satisfy A.5.15 Access Control with network trust segmentation.' }
+            Gap = @{ Citation = 'A.5.15'; Requirement = 'Applicable'
+                Detail = 'No network segmentation. A.5.15 requires access control based on network context.' }
+        }
+    }
+
+    InboundSpamPolicy = @{
+        Title    = 'Harden inbound spam policy'
+        Category = 'Threat Protection'
+        NIST = @{
+            Satisfied = @{ Citation = 'SI-3, SI-8'; Requirement = 'Required'
+                Detail = 'Hardened spam policy satisfies SI-3 Malicious Code Protection and SI-8 Spam Protection.' }
+            Gap = @{ Citation = 'SI-3, SI-8'; Requirement = 'Required'
+                Detail = 'Default spam policy inadequate. SI-8 requires spam protection controls tuned to organizational requirements.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Hardened spam policy satisfies A.8.7 Protection Against Malware.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Default spam policy. A.8.7 requires adequate malware and spam protection.' }
+        }
+    }
+
+    MalwareFilterPolicy = @{
+        Title    = 'Harden malware filter policy'
+        Category = 'Threat Protection'
+        NIST = @{
+            Satisfied = @{ Citation = 'SI-3'; Requirement = 'Required'
+                Detail = 'Hardened malware filter satisfies SI-3 Malicious Code Protection with ZAP and file filtering.' }
+            Gap = @{ Citation = 'SI-3'; Requirement = 'Required'
+                Detail = 'Default malware filter. SI-3 requires malicious code protection tuned beyond defaults.' }
+        }
+        HIPAA = @{
+            Satisfied = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'
+                Detail = 'Hardened malware filter satisfies §164.308(a)(5)(ii)(B) Protection from Malicious Software.' }
+            Gap = @{ Citation = '§164.308(a)(5)(ii)(B)'; Requirement = 'Addressable'
+                Detail = 'Default malware filter insufficient for §164.308(a)(5)(ii)(B) ePHI protection requirements.' }
+        }
+        ISO = @{
+            Satisfied = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Hardened malware filter satisfies A.8.7 Protection Against Malware.' }
+            Gap = @{ Citation = 'A.8.7'; Requirement = 'Applicable'
+                Detail = 'Default malware filter. A.8.7 requires active protection against malware.' }
+        }
+    }
+
     DictionaryVersion = '1.0.0'
     LastUpdated   = '2026-04-23'
 }
