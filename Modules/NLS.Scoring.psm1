@@ -402,15 +402,29 @@ function Invoke-NLSScoringModel {
     # Excludes onmicrosoft.com -- Microsoft-managed, cannot configure DMARC
     $dmarcData = $Results['DMARC']
     if ($dmarcData -and $dmarcData['DMARC']) {
-        $dmarc       = $dmarcData['DMARC']
-        $allDomains  = @($dmarc['Domains'])
-        # Exclude Microsoft-managed domains from scoring
-        $userDomains = @($allDomains | Where-Object { $_['Domain'] -notmatch 'onmicrosoft\.com$' })
-        $total       = $userDomains.Count
-        $missing     = ($userDomains | Where-Object { -not $_['HasDMARC'] }).Count
-        $enforced    = ($userDomains | Where-Object { $_['Enforced'] }).Count
-        $quarantine  = ($userDomains | Where-Object { $_['Partial'] }).Count
-        $nonePolicy  = ($userDomains | Where-Object { $_['Policy'] -eq 'none' }).Count
+        $dmarc           = $dmarcData['DMARC']
+        # Always filter inline using List[object] -- avoids @() single-item unwrap bug
+        $allDmarcDomains = @($dmarc['Domains'])
+        $userDomains     = [System.Collections.Generic.List[object]]::new()
+        foreach ($dmarcDom in $allDmarcDomains) {
+            if ($dmarcDom -is [System.Collections.IDictionary] -and $dmarcDom['Domain'] -notmatch 'onmicrosoft.com') {
+                [void]$userDomains.Add($dmarcDom)
+            }
+        }
+        $total      = $userDomains.Count
+        # Use explicit foreach counters -- pipe+Where-Object double-enumerates OrderedDictionary
+        $missing = 0; $enforced = 0; $quarantine = 0; $nonePolicy = 0
+        foreach ($ud in $userDomains) {
+            if (-not $ud['HasDMARC'])       { $missing++ }
+            if ($ud['Enforced'])             { $enforced++ }
+            if ($ud['Partial'])              { $quarantine++ }
+            if ($ud['Policy'] -eq 'none')    { $nonePolicy++ }
+        }
+
+        if ($script:nlsDebug) {
+            Write-Host "  [DMARC-DEBUG] AllDomains=$($allDmarcDomains.Count) UserDomains=$total Missing=$missing Quarantine=$quarantine" -ForegroundColor Cyan
+        }
+
 
         if ($missing -eq 0 -and $enforced -eq $total) {
             Add-NLSFinding -ControlId 'DMARC' -State 'Satisfied' `
@@ -436,9 +450,16 @@ function Invoke-NLSScoringModel {
         # MTA-STS -- exclude onmicrosoft.com (Microsoft-managed, MTA-STS not applicable)
         if ($mfData['MTASTS']) {
             $mtas        = $mfData['MTASTS']
-            $mtasDomains = @($mtas['Domains'] | Where-Object { $_['Domain'] -notmatch 'onmicrosoft.com' })
+            # Use explicit foreach to avoid PowerShell IEnumerable double-enumeration
+            $mtasDomains = [System.Collections.Generic.List[object]]::new()
+            foreach ($mtaDom in @($mtas['Domains'])) {
+                if ($mtaDom -is [System.Collections.IDictionary] -and $mtaDom['Domain'] -notmatch 'onmicrosoft.com') {
+                    [void]$mtasDomains.Add($mtaDom)
+                }
+            }
             $mtasTotal   = $mtasDomains.Count
-            $mtasEnabled = ($mtasDomains | Where-Object { $_['MTAStsEnabled'] }).Count
+            $mtasEnabled = 0
+            foreach ($mtaDom in $mtasDomains) { if ($mtaDom['MTAStsEnabled']) { $mtasEnabled++ } }
             if ($mtasTotal -eq 0) { $mtasTotal = $mtas['TotalDomains']; $mtasEnabled = $mtas['EnabledCount'] }
             if ($mtasEnabled -eq $mtasTotal -and $mtasTotal -gt 0) {
                 Add-NLSFinding -ControlId 'MTASTS' -State 'Satisfied' `
@@ -447,7 +468,7 @@ function Invoke-NLSScoringModel {
             } else {
                 Add-NLSFinding -ControlId 'MTASTS' -State 'Gap' `
                     -Detail "MTA-STS not published on $($mtasTotal - $mtasEnabled) of $mtasTotal domain(s). SMTP downgrade attacks possible." `
-                    -CurrentState "Enabled on $($mtas['EnabledCount']) of $($mtas['TotalDomains']) domain(s)" `
+                    -CurrentState "Enabled on $mtasEnabled of $mtasTotal domain(s)" `
                     -Recommended 'MTA-STS policy published on all domains' `
                     -Remediation 'Publish MTA-STS policy file at https://mta-sts.<domain>/.well-known/mta-sts.txt and add _mta-sts TXT record'
             }
