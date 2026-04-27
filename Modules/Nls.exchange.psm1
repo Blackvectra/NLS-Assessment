@@ -17,7 +17,7 @@ function Get-NLSExchangePolicies {
     try {
         $authPolicies = Get-AuthenticationPolicy -ErrorAction Stop
         $orgConfig    = Get-OrganizationConfig -ErrorAction Stop
-        $policyResults = foreach ($policy in $authPolicies) {
+        $policyResults = @(foreach ($policy in $authPolicies) {
             $basicAuthProps = $policy.PSObject.Properties | Where-Object { $_.Name -like 'AllowBasicAuth*' }
             $failures = $basicAuthProps | Where-Object { $_.Value -eq $true }
             [ordered]@{
@@ -25,7 +25,7 @@ function Get-NLSExchangePolicies {
                 AllFailures   = if ($failures) { $failures.Name -join ', ' } else { $null }
                 FullyHardened = ($null -eq $failures -or $failures.Count -eq 0)
             }
-        }
+        })
         $results['AuthenticationPolicies'] = [ordered]@{
             Policies         = @($policyResults)
             OrgDefaultPolicy = $orgConfig.DefaultAuthenticationPolicy
@@ -74,7 +74,10 @@ function Get-NLSExchangePolicies {
 
     # ── Mailbox Protocol Hardening -- v2: granular lists ─────
     try {
-        $casMailboxes    = Get-CasMailbox -ResultSize Unlimited -ErrorAction Stop
+        $allCasMailboxes = Get-CasMailbox -ResultSize Unlimited -ErrorAction Stop
+        # Exclude system mailboxes -- DiscoverySearchMailbox, SystemMailbox etc cannot be configured
+        $systemPattern   = 'DiscoverySearchMailbox|SystemMailbox|quarantine|Migration|FederatedEmail|MicrosoftExchange'
+        $casMailboxes    = @($allCasMailboxes | Where-Object { $_.Name -notmatch $systemPattern })
         $popEnabled      = @($casMailboxes | Where-Object { $_.PopEnabled })
         $imapEnabled     = @($casMailboxes | Where-Object { $_.ImapEnabled })
 
@@ -187,7 +190,7 @@ function Get-NLSExchangePolicies {
     # ── DNSSEC -- v2: live DNS lookup + EXO check ────────────
     try {
         $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
-        $dnssecResults = foreach ($domain in $acceptedDomains) {
+        $dnssecResults = @(foreach ($domain in $acceptedDomains) {
             $domainName = $domain.DomainName
             $dnssecEnabled = $false
             $dnssecStatus  = 'Unknown'
@@ -232,7 +235,7 @@ function Get-NLSExchangePolicies {
                 Status  = $dnssecStatus
                 Source  = $dnssecSource
             }
-        }
+        })
 
         $results['DNSSEC'] = [ordered]@{
             Domains         = @($dnssecResults)
@@ -260,7 +263,7 @@ function Get-NLSDMARCStatus {
 
     try {
         $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
-        $dmarcResults    = foreach ($domain in $acceptedDomains) {
+        $dmarcResults    = @(foreach ($domain in $acceptedDomains) {
             try {
                 $dnsResult = Resolve-DnsName -Name "_dmarc.$($domain.DomainName)" -Type TXT -Server '8.8.8.8' -ErrorAction Stop
                 # Join Strings array and take first matching record
@@ -301,14 +304,13 @@ function Get-NLSDMARCStatus {
                     Record   = $null
                 }
             }
-        }
+        })
 
+        # Store raw domains -- scoring filters onmicrosoft.com inline
+        # Do NOT store filtered array in hashtable -- PowerShell @() unwraps single-item arrays
         $results['DMARC'] = [ordered]@{
             Domains          = @($dmarcResults)
-            EnforcedCount    = ($dmarcResults | Where-Object { $_['Enforced'] }).Count
-            QuarantineCount  = ($dmarcResults | Where-Object { $_['Partial'] }).Count
-            MissingCount     = ($dmarcResults | Where-Object { -not $_['HasDMARC'] }).Count
-            NoneCount        = ($dmarcResults | Where-Object { $_['Policy'] -eq 'none' }).Count
+            TotalDomains     = @($dmarcResults).Count
         }
 
         Register-NLSCoverage -ControlFamily 'DMARC' -Status 'Collected'
@@ -400,7 +402,7 @@ function Get-NLSDNSEmailRecords {
         $dkimConfigs     = Get-DkimSigningConfig -ErrorAction SilentlyContinue
 
         if ($DebugMode) { Write-Host "  [DNS-DEBUG] Accepted domains: $($acceptedDomains.Count)" -ForegroundColor Cyan }
-        $domainRecords = foreach ($domain in $acceptedDomains) {
+        $domainRecords = @(foreach ($domain in $acceptedDomains) {
             $d = $domain.DomainName
             if ($DebugMode) { Write-Host "  [DNS-DEBUG] Processing: $d" -ForegroundColor Cyan }
 
@@ -517,7 +519,7 @@ function Get-NLSDNSEmailRecords {
                 DNSSEC  = [ordered]@{ Enabled = $dnssecEnabled; Status = $dnssecStatus }
                 MTASTS  = [ordered]@{ Enabled = $mtaStsEnabled; Mode = $mtaStsMode; Record = $mtaStsRecord }
             }
-        }
+        })
 
         if ($DebugMode) {
             Write-Host "  [DNS-DEBUG] Total domain records built: $(@($domainRecords).Count)" -ForegroundColor Cyan
@@ -564,7 +566,7 @@ function Get-NLSMailFlowHardening {
     # ── MTA-STS ──────────────────────────────────────────────
     try {
         $acceptedDomains = Get-AcceptedDomain -ErrorAction Stop
-        $mtaStsResults = foreach ($domain in $acceptedDomains) {
+        $mtaStsResults = @(foreach ($domain in $acceptedDomains) {
             $mtaStsEnabled = $false
             $mtaStsMode    = 'none'
             try {
@@ -576,7 +578,7 @@ function Get-NLSMailFlowHardening {
                 }
             } catch { }
             [ordered]@{ Domain = $domain.DomainName; MTAStsEnabled = $mtaStsEnabled; Mode = $mtaStsMode }
-        }
+        })
         $results['MTASTS'] = [ordered]@{
             Domains      = @($mtaStsResults)
             EnabledCount = ($mtaStsResults | Where-Object { $_['MTAStsEnabled'] }).Count
