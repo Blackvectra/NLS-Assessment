@@ -358,7 +358,187 @@ function Publish-NLSAssessmentSummary {
     }
 
 
-        # ── SECTION 4: APPENDIX ──────────────────────────────────
+        # ── Secure Score Roadmap to 80% ──────────────────────────
+    $ssData = $ExtendedData['SecureScore']
+    if ($ssData -and $ssData['ScorePercentage']) {
+        $ssPct      = $ssData['ScorePercentage']
+        $ssTarget   = $ssData['TargetScore']
+        $ssCurrent  = $ssData['CurrentScore']
+        $ssMax      = $ssData['MaxScore']
+        $ssPoints   = $ssData['PointsToTarget']
+        $ssRoadmap  = @($ssData['RoadmapTo80'])
+
+        [void]$sb.AppendLine('### Microsoft Secure Score')
+        [void]$sb.AppendLine('')
+
+        if ($ssPct -ge 80) {
+            [void]$sb.AppendLine("**Current Score: $ssPct% ($ssCurrent / $ssMax) ✓ Above 80% target**")
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('Tenant meets the 80% Secure Score target. Continue monitoring for score regressions as the tenant changes.')
+        } else {
+            $gap = 80 - $ssPct
+            [void]$sb.AppendLine("**Current Score: $ssPct% ($ssCurrent / $ssMax) — Target: 80% ($ssTarget pts)**")
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine("$([math]::Round($gap, 1)) percentage points below target. $ssPoints point(s) needed to reach 80%.")
+            [void]$sb.AppendLine('')
+
+            $ssRoadmapList = $ssData['RoadmapTo80']
+        # Render roadmap by iterating directly -- avoids @()/ICollection count issues
+        $ssRoadmapRows = [System.Collections.Generic.List[string]]::new()
+        $ssRoadmapN    = 1
+        if ($ssRoadmapList) {
+            foreach ($item in $ssRoadmapList) {
+                if ($null -eq $item -or -not ($item -is [System.Collections.IDictionary])) { continue }
+                if (-not $item['Title']) { continue }
+                try {
+                    [void]$ssRoadmapRows.Add("| $ssRoadmapN | $($item['Title']) | +$($item['Points']) | $($item['CumulativePercent'])% |")
+                    $ssRoadmapN++
+                } catch { }
+            }
+        }
+        if ($ssRoadmapRows.Count -gt 0) {
+                [void]$sb.AppendLine('**Prioritized roadmap to 80% — implement in order:**')
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine('| # | Control | Points | Score After |')
+                [void]$sb.AppendLine('|---|---|:---:|:---:|')
+                foreach ($row in $ssRoadmapRows) { [void]$sb.AppendLine($row) }
+                [void]$sb.AppendLine('')
+                [void]$sb.AppendLine('> Controls listed are not yet implemented. Implementing them in order reaches the 80% target with minimum effort. Source: Microsoft Secure Score.')
+            }
+        }
+        [void]$sb.AppendLine('')
+    }
+
+    # ── Device Security Recommendations ───────────────────────
+    $licDev = $ExtendedData['LicenseInventory']
+    [void]$sb.AppendLine('### Device Security Recommendations')
+    [void]$sb.AppendLine('')
+
+    if ($licDev -and $licDev['HasIntune'] -and $licDev['HasEntraIDP1']) {
+        [void]$sb.AppendLine('**Intune + Entra ID P1 — Full MDM available. Recommended actions:**')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Priority | Control | Action |')
+        [void]$sb.AppendLine('|---|---|---|')
+        [void]$sb.AppendLine('| High | Device Compliance Policy | Create Intune compliance policy requiring: BitLocker enabled, OS patched within 30 days, antivirus active, no jailbreak/root |')
+        [void]$sb.AppendLine('| High | Require Compliant Device in CA | Add CA policy: Grant access only to compliant or Hybrid Azure AD joined devices for cloud apps |')
+        [void]$sb.AppendLine('| High | Windows Update for Business | Deploy WUfB ring policy via Intune. Defer feature updates 30 days, quality updates 7 days |')
+        [void]$sb.AppendLine('| Medium | BitLocker Encryption | Enforce BitLocker via Intune endpoint security policy. Require encryption on all managed Windows devices |')
+        [void]$sb.AppendLine('| Medium | Endpoint Security Baseline | Deploy Microsoft Security Baseline or CIS L1 baseline via Intune. Covers 50+ hardening settings |')
+        [void]$sb.AppendLine('| Medium | Microsoft Defender Antivirus | Enforce Defender AV policy via Intune. Enable real-time protection, PUA protection, cloud-delivered protection |')
+        [void]$sb.AppendLine('| Low | App Protection Policies | Deploy MAM policies for iOS/Android. Require PIN, block copy/paste to unmanaged apps, remote wipe on unenroll |')
+        [void]$sb.AppendLine('| Low | Conditional Launch | Require minimum OS version, block rooted/jailbroken devices from accessing corporate data |')
+        [void]$sb.AppendLine('')
+    } elseif ($licDev -and $licDev['HasIntune']) {
+        [void]$sb.AppendLine('**Intune available — Entra ID P1 recommended for full enforcement:**')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Priority | Control | Action |')
+        [void]$sb.AppendLine('|---|---|---|')
+        [void]$sb.AppendLine('| High | Entra ID P1 — upgrade recommended | Required for device compliance enforcement in Conditional Access |')
+        [void]$sb.AppendLine('| High | BitLocker Encryption | Enforce via Intune even without CA enforcement |')
+        [void]$sb.AppendLine('| High | Endpoint Security Baseline | Deploy via Intune for immediate hardening benefit |')
+        [void]$sb.AppendLine('| Medium | Windows Update for Business | Deploy WUfB rings to ensure devices stay patched |')
+        [void]$sb.AppendLine('| Medium | Defender Antivirus Policy | Enforce AV settings via Intune endpoint security |')
+        [void]$sb.AppendLine('')
+    } else {
+        [void]$sb.AppendLine('**No Intune license detected — basic device recommendations:**')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Priority | Control | Action |')
+        [void]$sb.AppendLine('|---|---|---|')
+        [void]$sb.AppendLine('| High | Microsoft Intune — license recommended | Enables device compliance policies, endpoint security baselines, and CA device enforcement |')
+        [void]$sb.AppendLine('| High | BitLocker | Enable manually on all Windows devices. Required for data at rest protection |')
+        [void]$sb.AppendLine('| High | Windows Update | Ensure all devices are current. Enable automatic updates where possible |')
+        [void]$sb.AppendLine('| Medium | Microsoft Defender AV | Verify Defender is active and not disabled on any endpoints |')
+        [void]$sb.AppendLine('| Medium | Local Admin accounts | Audit and remove unnecessary local admin accounts on all devices |')
+        [void]$sb.AppendLine('')
+    }
+
+    if ($licDev -and $licDev['HasDefenderEndpoint']) {
+        [void]$sb.AppendLine('**Defender for Endpoint — EDR available:**')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| Priority | Control | Action |')
+        [void]$sb.AppendLine('|---|---|---|')
+        [void]$sb.AppendLine('| High | Device Onboarding | Verify all managed endpoints appear in Security Center > Device inventory. Onboard any missing devices |')
+        [void]$sb.AppendLine('| High | Attack Surface Reduction (ASR) | Enable ASR rules in audit mode first, then block mode for high-confidence rules: Block Office macros, credential stealing from LSASS, executable content from email |')
+        [void]$sb.AppendLine('| Medium | Threat and Vulnerability Management | Review exposed CVEs in TVM dashboard. Prioritize critical/high findings on internet-facing systems |')
+        [void]$sb.AppendLine('| Medium | Web Content Filtering | Enable web category filtering via MDE. Block malware, phishing, and high-risk categories |')
+        [void]$sb.AppendLine('| Low | Network Protection | Enable network protection to block connections to malicious domains and IPs at the OS level |')
+        [void]$sb.AppendLine('')
+    }
+
+    [void]$sb.AppendLine('')
+
+    # ── License Inventory & Recommendations ─────────────────
+    $licData = $ExtendedData['LicenseInventory']
+    if ($licData -and @($licData['Licenses']).Count -gt 0) {
+        [void]$sb.AppendLine('### License Inventory')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('| License | Assigned | Available |')
+        [void]$sb.AppendLine('|---|:---:|:---:|')
+        foreach ($lic in @($licData['Licenses'])) {
+            [void]$sb.AppendLine("| $($lic['DisplayName']) | $($lic['Assigned']) | $($lic['Available']) |")
+        }
+        [void]$sb.AppendLine('')
+
+        # License-aware recommendations
+        [void]$sb.AppendLine('### Security Recommendations Based on Licensed Features')
+        [void]$sb.AppendLine('')
+
+        if ($licData['HasEntraIDP2']) {
+            [void]$sb.AppendLine('**Entra ID P2 — Features available but check if configured:**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('- **Privileged Identity Management (PIM)** — Eliminate permanent GA assignments. Require time-limited activation with justification. Reduces standing privilege exposure significantly.')
+            [void]$sb.AppendLine('- **Identity Protection** — Risk-based Conditional Access. Block or require step-up MFA on risky sign-ins automatically. Requires P2 CA policy with sign-in risk condition.')
+            [void]$sb.AppendLine('- **Access Reviews** — Periodic review of group memberships, app assignments, and privileged roles. Automates the recertification process.')
+            [void]$sb.AppendLine('- **Entitlement Management** — Govern access to resources through access packages with approval workflows and expiration.')
+            [void]$sb.AppendLine('')
+        } elseif ($licData['HasEntraIDP1']) {
+            [void]$sb.AppendLine('**Entra ID P1 — Features available but check if configured:**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('- **Conditional Access** — Full CA policy engine available. Ensure all MFA policies are in enforced mode, legacy auth is blocked, and named locations are defined.')
+            [void]$sb.AppendLine('- **Entra ID P2 upgrade recommended** — Adds PIM, Identity Protection, and Access Reviews. High value for HIPAA and Zero Trust environments.')
+            [void]$sb.AppendLine('')
+        } else {
+            [void]$sb.AppendLine('**Entra ID Free — Limited security controls available:**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('- **Entra ID P1 upgrade strongly recommended** — Unlocks Conditional Access, which is required for enforced MFA, legacy auth blocking, and risk-based policies. Security Defaults are not a substitute for CA.')
+            [void]$sb.AppendLine('')
+        }
+
+        if ($licData['HasDefenderO365P2']) {
+            [void]$sb.AppendLine('**Defender for Office 365 P2 — Features available but check if configured:**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('- **Attack Simulation Training** — Run phishing simulations against users. Identify who clicks. Target training at highest-risk users.')
+            [void]$sb.AppendLine('- **Threat Explorer** — Real-time threat hunting across email, links, and attachments. Use after any suspected compromise or phishing incident.')
+            [void]$sb.AppendLine('- **Automated Investigation and Response (AIR)** — Automatic investigation of alerts and automatic remediation of confirmed threats.')
+            [void]$sb.AppendLine('')
+        } elseif ($licData['HasDefenderO365P1']) {
+            [void]$sb.AppendLine('**Defender for Office 365 P1 — Features available but check if configured:**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('- **Safe Attachments, Safe Links, Anti-Phishing** — Verify all policies are in enforce mode, not audit. Check policy scope covers all users.')
+            [void]$sb.AppendLine('- **Defender for Office 365 P2 upgrade recommended** — Adds Attack Simulation Training and Threat Explorer. Valuable for security awareness programs.')
+            [void]$sb.AppendLine('')
+        }
+
+        if ($licData['HasIntune']) {
+            [void]$sb.AppendLine('**Microsoft Intune — Device management available:**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('- **Device Compliance Policies** — Define compliant device requirements (encryption, OS version, antivirus). Required before enforcing device compliance in Conditional Access.')
+            [void]$sb.AppendLine('- **Require compliant device in CA** — Not currently detected. Add a CA policy requiring compliant or Hybrid Azure AD joined device for access to corporate resources.')
+            [void]$sb.AppendLine('- **Endpoint security baselines** — Deploy CIS or Microsoft security baselines via Intune to enrolled devices.')
+            [void]$sb.AppendLine('')
+        }
+
+        if ($licData['HasDefenderEndpoint']) {
+            [void]$sb.AppendLine('**Microsoft Defender for Endpoint — Endpoint detection available:**')
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('- **Onboard devices** — Verify all managed endpoints are onboarded to MDE. Check Security Center > Device inventory.')
+            [void]$sb.AppendLine('- **Threat and Vulnerability Management** — Review exposed CVEs and misconfigurations across the device fleet.')
+            [void]$sb.AppendLine('- **Attack Surface Reduction rules** — Enable ASR rules in block mode for high-confidence rules. Audit mode first, then enforce.')
+            [void]$sb.AppendLine('')
+        }
+    }
+
+    # ── SECTION 4: APPENDIX ──────────────────────────────────
     [void]$sb.AppendLine('## 4. Appendix')
     [void]$sb.AppendLine('')
 
