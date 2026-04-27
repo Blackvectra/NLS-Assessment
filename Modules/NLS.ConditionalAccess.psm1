@@ -212,62 +212,72 @@ function Get-NLSSecureScore {
     $results = [ordered]@{}
 
     try {
-        $scores  = Get-MgSecuritySecureScore -Top 1 -ErrorAction Stop
-        $current = $scores | Select-Object -First 1
+        # Collect via SDK -- more reliable object hydration than raw HTTP
+        $sdkScores   = Get-MgSecuritySecureScore -Top 1 -ErrorAction Stop
+        $current     = $sdkScores | Select-Object -First 1
+        $sdkProfiles = Get-MgSecuritySecureScoreControlProfile -All -ErrorAction Stop
 
-        $profiles = Get-MgSecuritySecureScoreControlProfile -All -ErrorAction Stop
+        $profiles      = $sdkProfiles
+        $controlScores = @($current.ControlScores)
 
-        # Build lookup: controlName -> implementationStatus from actual tenant score instance
-        $controlScoreLookup = @{}
-        foreach ($cs in $current.ControlScores) {
-            if (-not $cs.ControlName) { continue }  # skip null keys
-            $csStatus = if ($cs.AdditionalProperties -and $cs.AdditionalProperties['implementationStatus']) {
-                $cs.AdditionalProperties['implementationStatus']
-            } elseif ($cs.On -eq $cs.Total -and $cs.Total -gt 0) { 'implemented' } else { 'notImplemented' }
-            $controlScoreLookup[$cs.ControlName] = $csStatus
-        }
+        $profiles = $sdkProfiles
 
-        $controlSummary = @($profiles | ForEach-Object {
-            $status = if ($_.ControlName -and $controlScoreLookup.ContainsKey($_.ControlName)) {
-                $controlScoreLookup[$_.ControlName]
-            } elseif ($_.ImplementationStatus) { $_.ImplementationStatus } else { 'unknown' }
-            [ordered]@{
-                ControlName          = $_.ControlName
-                Title                = $_.Title
-                CurrentScore         = $_.CurrentScore
-                MaxScore             = $_.MaxScore
-                ImplementationStatus = $status
-                Threats              = if ($_.Threats) { $_.Threats -join ', ' } else { '' }
-                Remediation          = $_.Remediation
-            }
-        })
-
-        $notImplemented = @($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'notImplemented' } |
-            Sort-Object { [double]$_['MaxScore'] } -Descending |
-            Select-Object -First 20)
-
-        # Calculate 80% roadmap -- which controls get there fastest
+        # Build roadmap directly from ControlScores -- no ImplementationStatus needed
+        # Sort by gap (Total - Score) descending = highest impact first
         $currentPct   = if ($current.MaxScore -gt 0) { [math]::Round(($current.CurrentScore / $current.MaxScore) * 100, 1) } else { 0 }
         $targetScore  = [math]::Round($current.MaxScore * 0.80, 0)
         $pointsNeeded = [math]::Max(0, $targetScore - $current.CurrentScore)
+
+        # Build profile lookups -- $cs.Total does NOT exist in Graph SDK, must use profile MaxScore
+        # Profile ControlName is null in Graph SDK -- use Id as the matching key
+        # ControlScore.ControlName matches Profile.Id (confirmed via JSON dump)
+        $profileTitles    = @{}
+        $profileMaxScores = @{}
+        foreach ($p in $profiles) {
+            $key = if ($p.Id) { $p.Id } elseif ($p.ControlName) { $p.ControlName } else { $null }
+            if (-not $key) { continue }
+            $profileTitles[$key]    = if ($p.Title) { $p.Title } else { $key }
+            $profileMaxScores[$key] = if ($null -ne $p.MaxScore -and [double]$p.MaxScore -gt 0) { [double]$p.MaxScore } else { 0 }
+        }
+
+        # Verify lookup populated correctly
+
+        # Get not-implemented controls: current Score < profile MaxScore
+        $notImplemented = [System.Collections.Generic.List[object]]::new()
+        foreach ($cs in $controlScores) {
+            if (-not $cs.ControlName) { continue }
+            $csScore = 0
+            if ($null -ne $cs.Score) { $csScore = [double]$cs.Score }
+            elseif ($cs.AdditionalProperties -and $null -ne $cs.AdditionalProperties['score']) { $csScore = [double]$cs.AdditionalProperties['score'] }
+            $csTotal = if ($profileMaxScores.ContainsKey($cs.ControlName)) { $profileMaxScores[$cs.ControlName] } else { 0 }
+            if ($csTotal -gt 0 -and $csScore -lt $csTotal) {
+                $gap   = $csTotal - $csScore
+                $title = if ($profileTitles.ContainsKey($cs.ControlName)) { $profileTitles[$cs.ControlName] } else { $cs.ControlName }
+                [void]$notImplemented.Add([ordered]@{
+                    ControlName = $cs.ControlName
+                    Title       = $title
+                    MaxScore    = $csTotal
+                    Gap         = $gap
+                })
+            }
+        }
+        $notImplemented = @($notImplemented | Sort-Object { $_['Gap'] } -Descending | Select-Object -First 20)
+
+        # Build roadmap to 80%
         $cumulative   = $current.CurrentScore
         $roadmapItems = [System.Collections.Generic.List[object]]::new()
         foreach ($ctrl in $notImplemented) {
             if ($cumulative -ge $targetScore) { break }
-            $pts        = if ($ctrl['MaxScore']) { [double]$ctrl['MaxScore'] } else { [double]$ctrl.MaxScore }
+            $pts      = [double]$ctrl['Gap']
             $cumulative += $pts
-            $newPct     = if ($current.MaxScore -gt 0) { [math]::Round(($cumulative / $current.MaxScore) * 100, 1) } else { 0 }
+            $newPct   = if ($current.MaxScore -gt 0) { [math]::Round(($cumulative / $current.MaxScore) * 100, 1) } else { 0 }
             [void]$roadmapItems.Add([ordered]@{
-                Title             = if ($ctrl['Title']) { $ctrl['Title'] } elseif ($ctrl.Title) { $ctrl.Title } else { $ctrl['ControlName'] }
-                Points            = $pts
+                Title             = $ctrl['Title']
+                Points            = [math]::Round($pts, 1)
                 CumulativeScore   = [math]::Round($cumulative, 1)
                 CumulativePercent = $newPct
-                Threats           = if ($ctrl['Threats']) { $ctrl['Threats'] } else { '' }
             })
         }
-
-        # Debug trace -- always print to diagnose roadmap
-
 
         $results['SecureScore'] = [ordered]@{
             CurrentScore      = $current.CurrentScore
@@ -278,10 +288,10 @@ function Get-NLSSecureScore {
             CreatedDate       = $current.CreatedDateTime
             TopGaps           = $notImplemented
             RoadmapTo80       = $roadmapItems
-            TotalControls     = $profiles.Count
-            NotImplemented    = ($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'notImplemented' }).Count
-            PartiallyImpl     = ($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'thirdParty' -or $_['ImplementationStatus'] -eq 'planned' }).Count
-            FullyImplemented  = ($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'implemented' }).Count
+            TotalControls     = $controlScores.Count
+            NotImplemented    = $notImplemented.Count
+            PartiallyImpl     = 0
+            FullyImplemented  = $fullCount
         }
 
         Register-NLSCoverage -ControlFamily 'SecureScore' -Status 'Collected'
@@ -753,7 +763,6 @@ function Get-NLSBreakGlassAccount {
 
     return $results
 }
-
 
 function Get-NLSLicenseInventory {
     <#
