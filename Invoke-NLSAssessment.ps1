@@ -134,6 +134,9 @@ param (
 
     [Parameter(Mandatory = $false)]
     [switch]$ZeroTrust,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$ISO,
     # ─────────────────────────────────────────────────────────
 
     # ── v2 feature flags ─────────────────────────────────────
@@ -275,6 +278,7 @@ if ($P) {
             # NIST + CIS with full Graph -- general purpose assessment
             if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
             if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
+            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
             if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
             if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
             if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
@@ -287,6 +291,7 @@ if ($P) {
             # Healthcare client -- dual-state HIPAA gap analysis, full identity and email coverage
             if (-not $PSBoundParameters.ContainsKey('HIPAA'))             { $HIPAA             = $true }
             if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))      { $HIPAAProposed     = $true }
+            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
             if (-not $PSBoundParameters.ContainsKey('DMARC'))              { $DMARC             = $true }
             if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))    { $SharedMailboxes   = $true }
             if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport         = $true }
@@ -302,6 +307,7 @@ if ($P) {
             # MSP tenant assessment -- NIST + CIS with full tenant hygiene inventory
             if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
             if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
+            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
             if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
             if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
             if (-not $PSBoundParameters.ContainsKey('GuestInventory'))    { $GuestInventory    = $true }
@@ -322,6 +328,7 @@ if ($P) {
             if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
             if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))         { $ZeroTrust         = $true }
             if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
+            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
             if (-not $PSBoundParameters.ContainsKey('NamedLocations'))    { $NamedLocations    = $true }
             if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
             if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
@@ -343,6 +350,7 @@ if ($P) {
             if (-not $PSBoundParameters.ContainsKey('CIS'))                { $CIS                = $true }
             if (-not $PSBoundParameters.ContainsKey('HIPAA'))              { $HIPAA              = $true }
             if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))      { $HIPAAProposed      = $true }
+            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
             if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))          { $ZeroTrust          = $true }
             if (-not $PSBoundParameters.ContainsKey('SecureScore'))        { $SecureScore        = $true }
             if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport          = $true }
@@ -535,6 +543,7 @@ if (-not ($NIST -or $CIS -or $HIPAA -or $HIPAAProposed -or $ZeroTrust)) {
     if ($HIPAA)         { $activeFrameworks += 'HIPAA Current' }
     if ($HIPAAProposed) { $activeFrameworks += 'HIPAA Proposed' }
     if ($ZeroTrust)     { $activeFrameworks += 'Zero Trust' }
+    if ($ISO)           { $activeFrameworks += 'ISO 27001:2022' }
 }
 Write-Host ($activeFrameworks -join ', ') -ForegroundColor White
 
@@ -939,10 +948,12 @@ $scoringParams = @{
     HIPAA        = [bool]$HIPAA
     HIPAAProposed = [bool]$HIPAAProposed
     ZeroTrust    = [bool]$ZeroTrust
+    ISO          = [bool]$ISO
     DebugMode    = [bool]$DebugScoring
 }
 
 $scoredResults = Invoke-NLSScoringModel @scoringParams
+
 
 Write-Host ''
 
@@ -980,6 +991,27 @@ if ($identityHardeningResults -and $identityHardeningResults['AuthenticationMeth
 if ($identityHardeningResults -and $identityHardeningResults['ConsentFramework'])   { $extendedData['ConsentFramework']         = $identityHardeningResults['ConsentFramework'] }
 if ($identityHardeningResults -and $identityHardeningResults['PIM'])               { $extendedData['PIM']                      = $identityHardeningResults['PIM'] }
 if ($breakGlassResults -and $breakGlassResults['BreakGlassAccounts'])              { $extendedData['BreakGlassAccounts']        = $breakGlassResults['BreakGlassAccounts'] }
+# ─────────────────────────────────────────────
+# Correlation Engine
+# ─────────────────────────────────────────────
+
+Write-Host '[-] Running correlation engine...' -ForegroundColor DarkGray
+$correlationFindings = @()
+if ($scoredResults -and $scoredResults['Findings']) {
+    $corrParams = @{
+        Findings     = $scoredResults['Findings']
+        ExtendedData = $extendedData
+        DebugMode    = [bool]$DebugScoring
+    }
+    $correlationFindings = Invoke-NLSCorrelationEngine @corrParams
+    if ($correlationFindings.Count -gt 0) {
+        foreach ($cf in $correlationFindings) {
+            [void]$scoredResults['Findings'].Add($cf)
+        }
+        Write-Host "  [+] $($correlationFindings.Count) attack path correlation(s) identified" -ForegroundColor Yellow
+    }
+}
+
 
 if ($DebugAll) {
     Write-Host '  [DEBUG] === allResults keys ===' -ForegroundColor DarkGray
