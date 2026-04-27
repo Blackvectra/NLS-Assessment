@@ -626,15 +626,18 @@ foreach ($mod in $moduleFiles) {
     }
 }
 
-# Generate hash manifest if requested -- run this after clean install or update
+# Always regenerate hash manifest -- keeps baseline current after any file update
+# -GenerateManifest flag retained for explicit standalone manifest generation
+Write-Host '[-] Updating module hash manifest...' -ForegroundColor DarkGray
+$null = New-NLSModuleHashManifest -ModulesPath $modulesDir
+Write-Host '  [+] Manifest updated' -ForegroundColor DarkGray
+
 if ($GenerateManifest) {
-    Write-Host '[-] Generating module hash manifest...' -ForegroundColor DarkGray
-    $null = New-NLSModuleHashManifest -ModulesPath $modulesDir
-    Write-Host '  [+] Manifest generated. Re-run without -GenerateManifest to run assessment.' -ForegroundColor Green
+    Write-Host '  [+] Manifest generated. Modules directory baseline recorded.' -ForegroundColor Green
     exit 0
 }
 
-# Module integrity check -- verify all NLS modules loaded from expected path
+# Module integrity check -- path verification (hash check is baseline for next run)
 $integrityCheck = Test-NLSModuleIntegrity -ExpectedModulesPath $modulesDir
 if (-not $integrityCheck.Passed) {
     Write-Host '[!] MODULE INTEGRITY VIOLATION DETECTED' -ForegroundColor Red
@@ -679,7 +682,7 @@ try {
         Write-Host "  [+] Output directory: $outDir" -ForegroundColor DarkGray
     }
 } catch {
-    Write-Host "[!] Failed to create output directory: $_" -ForegroundColor Red
+    Write-Host "[!] Failed to create output directory: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
 
@@ -704,7 +707,7 @@ if (-not $SkipConnect) {
         Connect-ExchangeOnline -UserPrincipalName $upn -ShowBanner:$false -ErrorAction Stop
         Write-Host '  [+] Exchange Online connected' -ForegroundColor Green
     } catch {
-        Write-Host "  [!] Exchange Online connection failed: $_" -ForegroundColor Red
+        Write-Host "  [!] Exchange Online connection failed: $($_.Exception.Message)" -ForegroundColor Red
         exit 1
     }
 
@@ -731,7 +734,7 @@ if (-not $SkipConnect) {
             Connect-MgGraph -Scopes $graphScopes -NoWelcome -ErrorAction Stop
             Write-Host '  [+] Microsoft Graph connected' -ForegroundColor Green
         } catch {
-            Write-Host "  [!] Microsoft Graph connection failed: $_" -ForegroundColor Red
+            Write-Host "  [!] Microsoft Graph connection failed: $($_.Exception.Message)" -ForegroundColor Red
             Write-Host '      Conditional Access checks will be unavailable.' -ForegroundColor Yellow
         }
     } else {
@@ -1004,11 +1007,12 @@ if ($scoredResults -and $scoredResults['Findings']) {
         DebugMode    = [bool]$DebugScoring
     }
     $correlationFindings = Invoke-NLSCorrelationEngine @corrParams
-    if ($correlationFindings.Count -gt 0) {
+    $corrCount = $correlationFindings.Count
+    if ($corrCount -gt 0) {
         foreach ($cf in $correlationFindings) {
             [void]$scoredResults['Findings'].Add($cf)
         }
-        Write-Host "  [+] $($correlationFindings.Count) attack path correlation(s) identified" -ForegroundColor Yellow
+        Write-Host "  [+] $corrCount attack path correlation(s) identified" -ForegroundColor Yellow
     }
 }
 
@@ -1059,7 +1063,20 @@ $remediationPath = Join-Path $outDir "$reportName-remediation.ps1"
 
 # Try manual path first, then auto-find
 $previousReport = $null
-if ($Compare -and (Test-Path $Compare)) {
+if ($Compare) {
+    if (-not (Test-Path $Compare)) {
+        Write-Host "[!] -Compare path not found: $($Compare | Split-Path -Leaf)" -ForegroundColor Red
+        exit 1
+    }
+    if ([System.IO.Path]::GetExtension($Compare) -ne '.md') {
+        Write-Host "[!] -Compare must point to a .md report file" -ForegroundColor Red
+        exit 1
+    }
+    $compareHeader = Get-Content $Compare -TotalCount 2 -ErrorAction SilentlyContinue
+    if (-not ($compareHeader -join '' -match 'NextLayerSec')) {
+        Write-Host "[!] -Compare file does not appear to be an NLS assessment report" -ForegroundColor Red
+        exit 1
+    }
     $previousReport = $Compare
     Write-Host "[-] Using specified previous report for delta..." -ForegroundColor DarkGray
 } else {
