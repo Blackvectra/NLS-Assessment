@@ -196,6 +196,9 @@ param (
     [switch]$DebugDNS,          # Trace DNS collection and rendering pipeline
 
     [Parameter(Mandatory = $false)]
+    [switch]$Help,              # Show usage information
+
+    [Parameter(Mandatory = $false)]
     [switch]$DebugAll,          # Full debug -- all sections, all data, all rendering
 
     [Parameter(Mandatory = $false)]
@@ -204,6 +207,46 @@ param (
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
+
+# ─────────────────────────────────────────────
+# Help
+if ($Help) {
+    Write-Host ""
+    Write-Host "NLS-Assessment v2.0.0 -- NextLayerSec M365 Security Assessment Framework" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "USAGE:" -ForegroundColor White
+    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName <admin@tenant.com> [options]"
+    Write-Host ""
+    Write-Host "PROFILES (-P):" -ForegroundColor White
+    Write-Host "  Quick       Exchange only, no Graph -- fastest triage"
+    Write-Host "  Standard    Full Graph -- general purpose assessment"
+    Write-Host "  HIPAA       HIPAA current + NPRM -- healthcare clients"
+    Write-Host "  MSP         MSP standard -- admin roles, stale accounts, DNS, mail flow"
+    Write-Host "  ZeroTrust   Zero Trust maturity -- named locations, identity hardening"
+    Write-Host "  Full        All frameworks, all features"
+    Write-Host ""
+    Write-Host "COMMON FLAGS:" -ForegroundColor White
+    Write-Host "  -RedactSensitiveData    Scrub UPNs, GUIDs, IPs from all output"
+    Write-Host "  -GenerateManifest       Generate SHA-256 hash manifest (run after updates)"
+    Write-Host "  -ClearToken             Clear WAM token cache (fixes stale Graph token)"
+    Write-Host ""
+    Write-Host "DEBUG FLAGS:" -ForegroundColor White
+    Write-Host "  -DebugAll               Full trace -- data flow, scoring, rendering"
+    Write-Host "  -DebugScoring           Scoring section traces and findings list"
+    Write-Host "  -DebugDNS               DNS collection and reporting pipeline"
+    Write-Host ""
+    Write-Host "EXAMPLES:" -ForegroundColor White
+    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick"
+    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData"
+    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData"
+    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest"
+    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -DebugAll"
+    Write-Host ""
+    Write-Host "FULL DOCS:" -ForegroundColor White
+    Write-Host "  Get-Help .\Invoke-NLSAssessment.ps1 -Full"
+    Write-Host ""
+    exit 0
+}
 
 # ─────────────────────────────────────────────
 # Debug flag expansion
@@ -230,44 +273,68 @@ if ($P) {
 
         'Standard' {
             # NIST + CIS with full Graph -- general purpose assessment
-            if (-not $PSBoundParameters.ContainsKey('NIST')) { $NIST = $true }
-            if (-not $PSBoundParameters.ContainsKey('CIS'))  { $CIS  = $true }
+            if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
+            if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
+            if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
+            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
+            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))        { $BreakGlass        = $true }
+            if (-not $PSBoundParameters.ContainsKey('IdentityHardening')) { $IdentityHardening = $true }
+            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))    { $GuestInventory    = $true }
         }
 
         'HIPAA' {
-            # Healthcare client -- dual-state HIPAA gap analysis with email auth and MFA
-            if (-not $PSBoundParameters.ContainsKey('HIPAA'))         { $HIPAA         = $true }
-            if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))  { $HIPAAProposed = $true }
-            if (-not $PSBoundParameters.ContainsKey('DMARC'))          { $DMARC         = $true }
-            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes')){ $SharedMailboxes = $true }
-            if (-not $PSBoundParameters.ContainsKey('MFAReport'))      { $MFAReport     = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))     { $AdminRoles    = $true }
+            # Healthcare client -- dual-state HIPAA gap analysis, full identity and email coverage
+            if (-not $PSBoundParameters.ContainsKey('HIPAA'))             { $HIPAA             = $true }
+            if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))      { $HIPAAProposed     = $true }
+            if (-not $PSBoundParameters.ContainsKey('DMARC'))              { $DMARC             = $true }
+            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))    { $SharedMailboxes   = $true }
+            if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport         = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))         { $AdminRoles        = $true }
+            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))      { $StaleAccounts     = $true }
+            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))         { $BreakGlass        = $true }
+            if (-not $PSBoundParameters.ContainsKey('IdentityHardening'))  { $IdentityHardening = $true }
+            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening'))  { $MailFlowHardening = $true }
+            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))     { $GuestInventory    = $true }
         }
 
         'MSP' {
-            # MSP tenant assessment -- NIST + CIS with tenant hygiene inventory
-            if (-not $PSBoundParameters.ContainsKey('NIST'))           { $NIST           = $true }
-            if (-not $PSBoundParameters.ContainsKey('CIS'))            { $CIS            = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))     { $AdminRoles     = $true }
-            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))  { $StaleAccounts  = $true }
-            if (-not $PSBoundParameters.ContainsKey('GuestInventory')) { $GuestInventory = $true }
-            if (-not $PSBoundParameters.ContainsKey('DMARC'))          { $DMARC          = $true }
-            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes')){ $SharedMailboxes = $true }
-            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))     { $DNSRecords      = $true }
+            # MSP tenant assessment -- NIST + CIS with full tenant hygiene inventory
+            if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
+            if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
+            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
+            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))    { $GuestInventory    = $true }
+            if (-not $PSBoundParameters.ContainsKey('DMARC'))             { $DMARC             = $true }
+            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))   { $SharedMailboxes   = $true }
+            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))        { $DNSRecords        = $true }
             if (-not $PSBoundParameters.ContainsKey('MailFlowHardening')) { $MailFlowHardening = $true }
+            if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
+            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))        { $BreakGlass        = $true }
+            if (-not $PSBoundParameters.ContainsKey('IdentityHardening')) { $IdentityHardening = $true }
+            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))    { $NamedLocations    = $true }
+            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals')) { $ServicePrincipals = $true }
+            if (-not $PSBoundParameters.ContainsKey('SecureScore'))       { $SecureScore       = $true }
         }
 
         'ZeroTrust' {
-            # Zero Trust posture assessment -- identity and devices pillars
-            if (-not $PSBoundParameters.ContainsKey('NIST'))               { $NIST               = $true }
-            if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))          { $ZeroTrust          = $true }
-            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))     { $NamedLocations     = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))         { $AdminRoles         = $true }
-            if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport          = $true }
-            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals'))  { $ServicePrincipals  = $true }
-            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))      { $StaleAccounts      = $true }
-            if (-not $PSBoundParameters.ContainsKey('IdentityHardening'))  { $IdentityHardening  = $true }
-            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))         { $BreakGlass         = $true }
+            # Zero Trust posture assessment -- identity, devices, network, and data pillars
+            if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
+            if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))         { $ZeroTrust         = $true }
+            if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
+            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))    { $NamedLocations    = $true }
+            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
+            if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
+            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals')) { $ServicePrincipals = $true }
+            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
+            if (-not $PSBoundParameters.ContainsKey('IdentityHardening')) { $IdentityHardening = $true }
+            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))        { $BreakGlass        = $true }
+            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))    { $GuestInventory    = $true }
+            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))   { $SharedMailboxes   = $true }
+            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))        { $DNSRecords        = $true }
+            if (-not $PSBoundParameters.ContainsKey('DMARC'))             { $DMARC             = $true }
+            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening')) { $MailFlowHardening = $true }
+            if (-not $PSBoundParameters.ContainsKey('SecureScore'))       { $SecureScore       = $true }
         }
 
         'Full' {
@@ -831,6 +898,13 @@ $metadata = Get-NLSMetadata `
 
 Write-Host ''
 
+# License inventory -- always collected when Graph is available
+$licenseResults = @{}
+if ($runGraph) {
+    Write-Host '[-] Collecting license inventory...' -ForegroundColor DarkGray
+    $licenseResults = Get-NLSLicenseInventory
+}
+
 # ─────────────────────────────────────────────
 # Scoring
 # ─────────────────────────────────────────────
@@ -897,6 +971,7 @@ if ($servicePrincipalResults -and $servicePrincipalResults['ServicePrincipalInve
 if ($dmarcResults -and $dmarcResults['DMARC'])                                     { $extendedData['DMARC']                    = $dmarcResults['DMARC'] }
 if ($sharedMailboxResults -and $sharedMailboxResults['SharedMailboxHardening'])    { $extendedData['SharedMailboxHardening']   = $sharedMailboxResults['SharedMailboxHardening'] }
 if ($dnsRecordResults)                                                              { $extendedData['DNSEmailRecords']          = $dnsRecordResults['DNSEmailRecords'] }
+if ($licenseResults -and $licenseResults['LicenseInventory'])                       { $extendedData['LicenseInventory']         = $licenseResults['LicenseInventory'] }
 if ($mailFlowResults -and $mailFlowResults['MTASTS'])                               { $extendedData['MTASTS']                   = $mailFlowResults['MTASTS'] }
 if ($mailFlowResults -and $mailFlowResults['InboundSpam'])                          { $extendedData['InboundSpam']              = $mailFlowResults['InboundSpam'] }
 if ($mailFlowResults -and $mailFlowResults['MalwareFilter'])                        { $extendedData['MalwareFilter']            = $mailFlowResults['MalwareFilter'] }
