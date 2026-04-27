@@ -522,8 +522,8 @@ function Get-NLSDNSEmailRecords {
         })
 
         if ($DebugMode) {
-            Write-Host "  [DNS-DEBUG] Total domain records built: $(@($domainRecords).Count)" -ForegroundColor Cyan
-            Write-Host "  [DNS-DEBUG] Storing in results['DNSEmailRecords']" -ForegroundColor Cyan
+        if ($DebugMode) { Write-Host "  [DNS-DEBUG] Total domain records built: $(@($domainRecords).Count)" -ForegroundColor Cyan }
+        if ($DebugMode) { Write-Host "  [DNS-DEBUG] Storing in results['DNSEmailRecords']" -ForegroundColor Cyan }
         }
         $results['DNSEmailRecords'] = [ordered]@{
             Domains           = @($domainRecords)
