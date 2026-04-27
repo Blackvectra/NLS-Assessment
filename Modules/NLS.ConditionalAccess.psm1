@@ -217,32 +217,71 @@ function Get-NLSSecureScore {
 
         $profiles = Get-MgSecuritySecureScoreControlProfile -All -ErrorAction Stop
 
+        # Build lookup: controlName -> implementationStatus from actual tenant score instance
+        $controlScoreLookup = @{}
+        foreach ($cs in $current.ControlScores) {
+            if (-not $cs.ControlName) { continue }  # skip null keys
+            $csStatus = if ($cs.AdditionalProperties -and $cs.AdditionalProperties['implementationStatus']) {
+                $cs.AdditionalProperties['implementationStatus']
+            } elseif ($cs.On -eq $cs.Total -and $cs.Total -gt 0) { 'implemented' } else { 'notImplemented' }
+            $controlScoreLookup[$cs.ControlName] = $csStatus
+        }
+
         $controlSummary = @($profiles | ForEach-Object {
+            $status = if ($_.ControlName -and $controlScoreLookup.ContainsKey($_.ControlName)) {
+                $controlScoreLookup[$_.ControlName]
+            } elseif ($_.ImplementationStatus) { $_.ImplementationStatus } else { 'unknown' }
             [ordered]@{
-                ControlName       = $_.ControlName
-                Title             = $_.Title
-                CurrentScore      = $_.CurrentScore
-                MaxScore          = $_.MaxScore
-                ImplementationStatus = $_.ImplementationStatus
-                Threats           = $_.Threats -join ', '
-                Remediation       = $_.Remediation
+                ControlName          = $_.ControlName
+                Title                = $_.Title
+                CurrentScore         = $_.CurrentScore
+                MaxScore             = $_.MaxScore
+                ImplementationStatus = $status
+                Threats              = if ($_.Threats) { $_.Threats -join ', ' } else { '' }
+                Remediation          = $_.Remediation
             }
         })
 
-        $notImplemented = @($controlSummary | Where-Object { $_.ImplementationStatus -eq 'notImplemented' } |
-            Sort-Object { [double]$_.MaxScore } -Descending |
-            Select-Object -First 10)
+        $notImplemented = @($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'notImplemented' } |
+            Sort-Object { [double]$_['MaxScore'] } -Descending |
+            Select-Object -First 20)
+
+        # Calculate 80% roadmap -- which controls get there fastest
+        $currentPct   = if ($current.MaxScore -gt 0) { [math]::Round(($current.CurrentScore / $current.MaxScore) * 100, 1) } else { 0 }
+        $targetScore  = [math]::Round($current.MaxScore * 0.80, 0)
+        $pointsNeeded = [math]::Max(0, $targetScore - $current.CurrentScore)
+        $cumulative   = $current.CurrentScore
+        $roadmapItems = [System.Collections.Generic.List[object]]::new()
+        foreach ($ctrl in $notImplemented) {
+            if ($cumulative -ge $targetScore) { break }
+            $pts        = if ($ctrl['MaxScore']) { [double]$ctrl['MaxScore'] } else { [double]$ctrl.MaxScore }
+            $cumulative += $pts
+            $newPct     = if ($current.MaxScore -gt 0) { [math]::Round(($cumulative / $current.MaxScore) * 100, 1) } else { 0 }
+            [void]$roadmapItems.Add([ordered]@{
+                Title             = if ($ctrl['Title']) { $ctrl['Title'] } elseif ($ctrl.Title) { $ctrl.Title } else { $ctrl['ControlName'] }
+                Points            = $pts
+                CumulativeScore   = [math]::Round($cumulative, 1)
+                CumulativePercent = $newPct
+                Threats           = if ($ctrl['Threats']) { $ctrl['Threats'] } else { '' }
+            })
+        }
+
+        # Debug trace -- always print to diagnose roadmap
+
 
         $results['SecureScore'] = [ordered]@{
-            CurrentScore        = $current.CurrentScore
-            MaxScore            = $current.MaxScore
-            ScorePercentage     = if ($current.MaxScore -gt 0) { [math]::Round(($current.CurrentScore / $current.MaxScore) * 100, 1) } else { 0 }
-            CreatedDate         = $current.CreatedDateTime
-            TopGaps             = $notImplemented
-            TotalControls       = $profiles.Count
-            NotImplemented      = ($controlSummary | Where-Object { $_.ImplementationStatus -eq 'notImplemented' }).Count
-            PartiallyImpl       = ($controlSummary | Where-Object { $_.ImplementationStatus -eq 'thirdParty' -or $_.ImplementationStatus -eq 'planned' }).Count
-            FullyImplemented    = ($controlSummary | Where-Object { $_.ImplementationStatus -eq 'implemented' }).Count
+            CurrentScore      = $current.CurrentScore
+            MaxScore          = $current.MaxScore
+            ScorePercentage   = $currentPct
+            TargetScore       = $targetScore
+            PointsToTarget    = $pointsNeeded
+            CreatedDate       = $current.CreatedDateTime
+            TopGaps           = $notImplemented
+            RoadmapTo80       = $roadmapItems
+            TotalControls     = $profiles.Count
+            NotImplemented    = ($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'notImplemented' }).Count
+            PartiallyImpl     = ($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'thirdParty' -or $_['ImplementationStatus'] -eq 'planned' }).Count
+            FullyImplemented  = ($controlSummary | Where-Object { $_['ImplementationStatus'] -eq 'implemented' }).Count
         }
 
         Register-NLSCoverage -ControlFamily 'SecureScore' -Status 'Collected'
@@ -715,6 +754,96 @@ function Get-NLSBreakGlassAccount {
     return $results
 }
 
+
+function Get-NLSLicenseInventory {
+    <#
+    .SYNOPSIS
+        Collects tenant subscribed SKUs and maps them to security feature availability.
+        Used to generate license-aware recommendations in the assessment report.
+    #>
+    param()
+
+    $results = [ordered]@{}
+
+    try {
+        $skus = Get-MgSubscribedSku -ErrorAction Stop
+
+        # Map SKUs to readable names and security features
+        $skuMap = @{
+            'AAD_PREMIUM'                           = 'Entra ID P1'
+            'AAD_PREMIUM_P2'                        = 'Entra ID P2'
+            'ATP_ENTERPRISE'                        = 'Defender for Office 365 P1'
+            'THREAT_INTELLIGENCE'                   = 'Defender for Office 365 P2'
+            'INTUNE_A'                              = 'Microsoft Intune'
+            'INTUNE_SMB'                            = 'Microsoft Intune'
+            'EMS'                                   = 'EMS E3'
+            'EMSPREMIUM'                            = 'EMS E5'
+            'ENTERPRISEPREMIUM'                     = 'Microsoft 365 E5'
+            'ENTERPRISEPREMIUM_NOPSTNCONF'          = 'Microsoft 365 E5 (no PSTN)'
+            'SPE_E3'                                = 'Microsoft 365 E3'
+            'SPE_E5'                                = 'Microsoft 365 E5'
+            'SPB'                                   = 'Microsoft 365 Business Premium'
+            'O365_BUSINESS_PREMIUM'                 = 'Microsoft 365 Business Premium'
+            'SMB_BUSINESS_PREMIUM'                  = 'Microsoft 365 Business Premium'
+            'Microsoft_365_Business_Basic'          = 'Microsoft 365 Business Basic'
+            'Microsoft_365_Business_Standard'       = 'Microsoft 365 Business Standard'
+            'IDENTITY_THREAT_PROTECTION'            = 'Microsoft 365 E5 Security'
+            'IDENTITY_THREAT_PROTECTION_FOR_EMS_E5' = 'Microsoft 365 E5 Security'
+            'MDATP_XPLAT'                           = 'Defender for Endpoint P2'
+            'WIN_DEF_ATP'                           = 'Defender for Endpoint P1'
+            'FLOW_FREE'                             = 'Power Automate Free'
+            'POWER_BI_STANDARD'                     = 'Power BI Free'
+            'PROJECTPREMIUM'                        = 'Project P3'
+            'VISIOCLIENT'                           = 'Visio P2'
+        }
+
+        $activeLicenses = @($skus | Where-Object { $_.ConsumedUnits -gt 0 })
+        $licenseNames   = @($activeLicenses | ForEach-Object {
+            $skuName = $skuMap[$_.SkuPartNumber]
+            if (-not $skuName) { $skuName = $_.SkuPartNumber }
+            [ordered]@{
+                SkuPartNumber = $_.SkuPartNumber
+                DisplayName   = $skuName
+                Assigned      = $_.ConsumedUnits
+                Available     = $_.PrepaidUnits.Enabled - $_.ConsumedUnits
+                Total         = $_.PrepaidUnits.Enabled
+            }
+        })
+
+        # Detect security feature availability
+        $allPartNumbers = @($activeLicenses | ForEach-Object { $_.SkuPartNumber })
+        # SPB = Microsoft 365 Business Premium -- includes Entra ID P1, Intune, Defender for Office 365 P1
+        $hasP1    = @($allPartNumbers | Where-Object { $_ -match 'AAD_PREMIUM|EMS|SPE_E3|O365_BUSINESS_PREMIUM|SMB_BUSINESS_PREMIUM|ENTERPRISEPREMIUM|^SPB$' })
+        $hasP2    = @($allPartNumbers | Where-Object { $_ -match 'AAD_PREMIUM_P2|EMSPREMIUM|SPE_E5|ENTERPRISEPREMIUM_NOPSTNCONF|IDENTITY_THREAT_PROTECTION' })
+        $hasMDOP1 = @($allPartNumbers | Where-Object { $_ -match 'ATP_ENTERPRISE|O365_BUSINESS_PREMIUM|SMB_BUSINESS_PREMIUM|SPE_E3|ENTERPRISEPREMIUM|^SPB$' })
+        $hasMDOP2 = @($allPartNumbers | Where-Object { $_ -match 'THREAT_INTELLIGENCE|SPE_E5|ENTERPRISEPREMIUM_NOPSTNCONF|IDENTITY_THREAT_PROTECTION' })
+        $hasIntune = @($allPartNumbers | Where-Object { $_ -match 'INTUNE_A|INTUNE_SMB|EMS|EMSPREMIUM|SPE_E3|SPE_E5|O365_BUSINESS_PREMIUM|SMB_BUSINESS_PREMIUM|ENTERPRISEPREMIUM|^SPB$' })
+        $hasMDE   = @($allPartNumbers | Where-Object { $_ -match 'MDATP_XPLAT|WIN_DEF_ATP|SPE_E5|EMSPREMIUM|IDENTITY_THREAT_PROTECTION|ENTERPRISEPREMIUM' })
+
+        $results['LicenseInventory'] = [ordered]@{
+            Licenses          = $licenseNames
+            TotalLicenseTypes = $licenseNames.Count
+            HasEntraIDP1      = [bool]($hasP1.Count -gt 0)
+            HasEntraIDP2      = [bool]($hasP2.Count -gt 0)
+            HasDefenderO365P1 = [bool]($hasMDOP1.Count -gt 0)
+            HasDefenderO365P2 = [bool]($hasMDOP2.Count -gt 0)
+            HasIntune         = [bool]($hasIntune.Count -gt 0)
+            HasDefenderEndpoint = [bool]($hasMDE.Count -gt 0)
+        }
+        Register-NLSCoverage -ControlFamily 'LicenseInventory' -Status 'Collected'
+    } catch {
+        Register-NLSException -Source 'Get-NLSLicenseInventory' -Message 'Failed to retrieve license inventory' -ErrorDetails $_.Exception.Message
+        Register-NLSCoverage -ControlFamily 'LicenseInventory' -Status 'Partial' -Reason $_.Exception.Message
+        $results['LicenseInventory'] = [ordered]@{
+            Licenses = @(); HasEntraIDP1 = $false; HasEntraIDP2 = $false
+            HasDefenderO365P1 = $false; HasDefenderO365P2 = $false
+            HasIntune = $false; HasDefenderEndpoint = $false
+        }
+    }
+
+    return $results
+}
+
 Export-ModuleMember -Function `
     Get-NLSConditionalAccessPolicies, `
     Get-NLSConditionalAccessTelemetry, `
@@ -726,4 +855,5 @@ Export-ModuleMember -Function `
     Get-NLSNamedLocations, `
     Get-NLSServicePrincipalInventory, `
     Get-NLSIdentityHardening, `
-    Get-NLSBreakGlassAccount
+    Get-NLSBreakGlassAccount, `
+    Get-NLSLicenseInventory
