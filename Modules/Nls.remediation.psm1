@@ -3,7 +3,7 @@
 # NextLayerSec Assessment Framework -- Remediation Script Generator
 #
 # Author:  NextLayerSec
-# Version: 2.1.1
+# Version: 2.0
 # License: CC BY-ND 4.0 -- https://creativecommons.org/licenses/by-nd/4.0/
 #
 
