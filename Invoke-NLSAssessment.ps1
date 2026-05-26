@@ -1,1146 +1,599 @@
 #Requires -Version 7.0
-#Requires -Modules ExchangeOnlineManagement
+#
+# Invoke-NLSAssessment.ps1
+# Entry point for NLS-Assessment (version read from module manifest at runtime)
+#
+# NextLayerSec
+# Author: NextLayerSec
+#
+# Flow:
+#   1. Import module (loads Lib, Collectors, Evaluators, Publishers)
+#   2. Connect to M365 services
+#   3. Run collectors -> raw data stored in module state
+#   4. Run evaluators -> findings registered via Add-NLSFinding
+#   5. Run publishers -> HTML, Markdown, JSON, XLSX, Playbook, Remediation script
+#
+# Usage:
+#   .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@client.com
+#   .\Invoke-NLSAssessment.ps1 -AppId <guid> -TenantId <guid> -CertificateThumbprint <40hex> -OrganizationDomain contoso.onmicrosoft.com
+#
 
-<#
-.SYNOPSIS
-    NextLayerSec Control-Plane Assessor v2
-    Read-only M365 security assessment instrument.
+[CmdletBinding()]
+param(
+    # OWASP ASVS V5.1.3 — UPN must match standard email format before reaching auth
+    [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._%+-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$|^$')]
+    [string] $UserPrincipalName,
+    [string] $OutputPath,
 
-.DESCRIPTION
-    Connects to Exchange Online and Microsoft Graph, collects security policy
-    configuration and sign-in telemetry, scores findings against the NextLayerSec
-    baseline, and produces structured markdown artifacts mapped to authoritative
-    compliance frameworks.
+    # App-only / certificate authentication for unattended runs
+    [string] $AppId,
+    [string] $TenantId,
+    [string] $CertificateThumbprint,
+    [string] $OrganizationDomain,
 
-    No tenant configuration changes are made at any point.
+    # Cloud environment
+    [ValidateSet('commercial','gcc','gcchigh','dod')]
+    [string] $Environment = 'commercial',
 
-.PARAMETER UserPrincipalName
-    Admin UPN used to authenticate to Exchange Online and Microsoft Graph.
+    # Skip switches
+    [switch] $SkipPurview,
+    [switch] $IncludePurview,   # Include Purview/IPPSSession (skipped by default — EOM v3.4 WAM crash)
+    [switch] $SkipTeams,
+    [switch] $SkipSharePoint,
+    [switch] $SkipIntune,
+    [switch] $SkipPowerPlatform,
+    [switch] $SkipDNS,
 
-.PARAMETER SkipConnect
-    Skip connection step if already connected to Exchange Online and Graph.
-
-.PARAMETER Quick
-    Skip sign-in log telemetry collection. Faster run.
-
-.PARAMETER NoTelemetry
-    Explicitly skip telemetry collection. Same as -Quick.
-
-.PARAMETER NoGraph
-    Skip Microsoft Graph entirely. Exchange Online checks only.
-    No Graph modules required. No browser consent prompt.
-
-.PARAMETER NIST
-    Include NIST SP 800-53 Rev 5 citations. Default when no framework flag passed.
-
-.PARAMETER CIS
-    Include CIS Controls v8.1 citations.
-
-.PARAMETER HIPAA
-    Include HIPAA Security Rule current enforceable rule citations.
-
-.PARAMETER HIPAAProposed
-    Include HIPAA NPRM December 2024 proposed rule citations.
-    Use with -HIPAA for dual-state gap analysis. Expected final rule May 2026.
-
-.PARAMETER ZeroTrust
-    Include CISA Zero Trust Maturity Model mapping in findings.
-    Adds ZT-specific checks for Identity and Devices pillars.
-
-.PARAMETER SecureScore
-    Pull Microsoft Secure Score and per-control recommendations from Graph.
-    Adds Secure Score section to the report with top improvement opportunities.
-
-.PARAMETER MFAReport
-    Pull per-user MFA registration status from Graph.
-    Surfaces exactly which users have no MFA registered.
-    Requires Reports.Read.All scope.
-
-.PARAMETER RedactSensitiveData
-    Scrub UPNs, GUIDs, and IP addresses from all output files.
-
-.PARAMETER OpenReport
-    Auto-open AssessmentSummary.md on completion.
-
-.EXAMPLE
-    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NoGraph -NIST
-
-.EXAMPLE
-    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed
-
-.EXAMPLE
-    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -SecureScore -MFAReport -RedactSensitiveData
-
-.EXAMPLE
-    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed -ZeroTrust -SecureScore -MFAReport
-
-.NOTES
-    Author:   NextLayerSec
-    Version:  2.0.0
-    Requires: PowerShell 7+
-              ExchangeOnlineManagement
-              Microsoft.Graph (full SDK)
-    License:  CC BY-ND 4.0 -- https://creativecommons.org/licenses/by-nd/4.0/
-
-    Graph scopes:
-      Policy.Read.ConditionalAccess     -- CA policy collection
-      Directory.Read.All                -- Graph directory access
-      AuditLog.Read.All                 -- Sign-in log telemetry (Full mode)
-      Reports.Read.All                  -- User MFA registration (-MFAReport)
-      SecurityEvents.Read.All           -- Secure Score (-SecureScore)
-#>
-
-[CmdletBinding(DefaultParameterSetName = 'Full')]
-param (
-    [Parameter(Mandatory = $false)]
-    [string]$UserPrincipalName,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$SkipConnect,
-
-    [Parameter(ParameterSetName = 'Quick')]
-    [switch]$Quick,
-
-    [Parameter(ParameterSetName = 'Full')]
-    [switch]$Full,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$NoTelemetry,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$NoGraph,
-
-    # ── Profile flag ─────────────────────────────────────────
-    # Predefined bundles of framework and feature flags.
-    # Individual flags can be added on top of a profile.
-    # Profile is applied first, then any explicit flags override.
-    [Parameter(Mandatory = $false)]
-    [ValidateSet('Quick', 'Standard', 'HIPAA', 'MSP', 'ZeroTrust', 'Full')]
-    [string]$P,
-    # ─────────────────────────────────────────────────────────
-
-    # ── Framework routing flags ───────────────────────────────
-    [Parameter(Mandatory = $false)]
-    [switch]$NIST,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$CIS,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$HIPAA,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$HIPAAProposed,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$ZeroTrust,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$ISO,
-    # ─────────────────────────────────────────────────────────
-
-    # ── v2 feature flags ─────────────────────────────────────
-    [Parameter(Mandatory = $false)]
-    [switch]$SecureScore,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$MFAReport,
-
-    [Parameter(Mandatory = $false)]
-    [switch]$OpenReport,
-
-    [Parameter(Mandatory = $false)]
-    [string]$Compare,       # Manual path to previous report for delta comparison
-
-    [Parameter(Mandatory = $false)]
-    [switch]$AdminRoles,        # Admin role inventory and over-privilege detection
-
-    [Parameter(Mandatory = $false)]
-    [switch]$StaleAccounts,     # Accounts inactive 90+ days
-
-    [Parameter(Mandatory = $false)]
-    [switch]$GuestInventory,    # External guest account inventory
-
-    [Parameter(Mandatory = $false)]
-    [switch]$NamedLocations,    # Named location definition check
-
-    [Parameter(Mandatory = $false)]
-    [switch]$ServicePrincipals, # High-privilege service principal inventory
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DMARC,             # DMARC policy state per domain
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DNSRecords,        # Live DNS lookup -- SPF, DMARC, DKIM records per domain
-
-    [Parameter(Mandatory = $false)]
-    [switch]$MailFlowHardening, # MTA-STS, inbound spam, malware filter checks
-
-    [Parameter(Mandatory = $false)]
-    [switch]$IdentityHardening, # Security defaults, SSPR, auth methods, consent, PIM
-
-    [Parameter(Mandatory = $false)]
-    [switch]$BreakGlass,        # Break-glass account configuration check
-
-    [Parameter(Mandatory = $false)]
-    [switch]$SharedMailboxes,   # Shared mailbox hardening check
-    # ─────────────────────────────────────────────────────────
-
-    [Parameter(Mandatory = $false)]
-    [switch]$ClearToken,       # Force clear cached Graph token before connecting
-
-    [Parameter(Mandatory = $false)]
-    [switch]$GenerateManifest, # Generate SHA-256 hash manifest for module integrity baseline
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DebugScoring,      # Surface verbose scoring errors to console during assessment
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DebugDNS,          # Trace DNS collection and rendering pipeline
-
-    [Parameter(Mandatory = $false)]
-    [switch]$Help,              # Show usage information
-
-    [Parameter(Mandatory = $false)]
-    [switch]$DebugAll,          # Full debug -- all sections, all data, all rendering
-
-    [Parameter(Mandatory = $false)]
-    [switch]$RedactSensitiveData
+    # Run modes
+    [switch] $NonInteractive,
+    # Audit fix (v4.6.x MED #6): validate that FromResults / BaselineResults
+    # point at an existing file via -LiteralPath. This refuses wildcard input
+    # ('*'), path-traversal sequences, and silently-missing files before any
+    # downstream Get-Content / republish step touches the path.
+    [ValidateScript({
+        if ([string]::IsNullOrEmpty($_)) { return $true }
+        if ($_ -match '\.\.[\\/]') { throw "Path traversal not allowed in FromResults." }
+        if (-not (Test-Path -LiteralPath $_ -PathType Leaf)) { throw "FromResults file not found: $_" }
+        return $true
+    })]
+    [string] $FromResults,
+    [ValidateScript({
+        if ([string]::IsNullOrEmpty($_)) { return $true }
+        if ($_ -match '\.\.[\\/]') { throw "Path traversal not allowed in BaselineResults." }
+        if (-not (Test-Path -LiteralPath $_ -PathType Leaf)) { throw "BaselineResults file not found: $_" }
+        return $true
+    })]
+    [string] $BaselineResults,
+    # OWASP ASVS V5.1.3 — every DnsDomains entry must be an FQDN before DNS resolver sees it
+    [ValidateScript({
+        foreach ($d in $_) {
+            if ($d -notmatch '^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$') {
+                throw "Invalid DNS domain name: '$d'"
+            }
+        }
+        return $true
+    })]
+    [string[]] $DnsDomains,
+    [switch] $JsonOnly,
+    [switch] $WhatIfConnections
 )
 
+# OWASP ASVS V16.4.1 — strict mode at the entry point so the orchestrator
+# uses the same semantics as the module body (uninitialized variable access,
+# property access on $null, indexing past array end all throw).
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Continue'
 
-# ─────────────────────────────────────────────
-# Help
-if ($Help) {
-    Write-Host ""
-    Write-Host "NLS-Assessment v2.0.0 -- NextLayerSec M365 Security Assessment Framework" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "USAGE:" -ForegroundColor White
-    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName <admin@tenant.com> [options]"
-    Write-Host ""
-    Write-Host "PROFILES (-P):" -ForegroundColor White
-    Write-Host "  Quick       Exchange only, no Graph -- fastest triage"
-    Write-Host "  Standard    Full Graph -- general purpose assessment"
-    Write-Host "  HIPAA       HIPAA current + NPRM -- healthcare clients"
-    Write-Host "  MSP         MSP standard -- admin roles, stale accounts, DNS, mail flow"
-    Write-Host "  ZeroTrust   Zero Trust maturity -- named locations, identity hardening"
-    Write-Host "  Full        All frameworks, all features"
-    Write-Host ""
-    Write-Host "COMMON FLAGS:" -ForegroundColor White
-    Write-Host "  -RedactSensitiveData    Scrub UPNs, GUIDs, IPs from all output"
-    Write-Host "  -GenerateManifest       Generate SHA-256 hash manifest (run after updates)"
-    Write-Host "  -ClearToken             Clear WAM token cache (fixes stale Graph token)"
-    Write-Host ""
-    Write-Host "DEBUG FLAGS:" -ForegroundColor White
-    Write-Host "  -DebugAll               Full trace -- data flow, scoring, rendering"
-    Write-Host "  -DebugScoring           Scoring section traces and findings list"
-    Write-Host "  -DebugDNS               DNS collection and reporting pipeline"
-    Write-Host ""
-    Write-Host "EXAMPLES:" -ForegroundColor White
-    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick"
-    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData"
-    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData"
-    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest"
-    Write-Host "  .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -DebugAll"
-    Write-Host ""
-    Write-Host "FULL DOCS:" -ForegroundColor White
-    Write-Host "  Get-Help .\Invoke-NLSAssessment.ps1 -Full"
-    Write-Host ""
-    exit 0
-}
+# v4.6.4 CRITICAL FIX: pre-initialize exit-code vars so StrictMode reads at end
+# (lines 570 + 586) never throw VariableIsUndefined on the success path. Without
+# this every successful run crashes with a stack trace AFTER the report is
+# written but BEFORE `exit 0` lands → callers see exit code 1.
+$script:NLSFatalExitCode  = $null
+$script:NLSSuccessExitCode = $null
 
-# ─────────────────────────────────────────────
-# Debug flag expansion
-if ($DebugAll) {
-    $DebugScoring = $true
-    $DebugDNS     = $true
-}
+# OWASP ASVS V11.2.2 / OSSTMM DN5 — enforce TLS 1.2 minimum (Microsoft endpoints
+# already require this, but defense-in-depth catches dev/test environments where
+# .NET defaults might drift back to older protocols)
+[System.Net.ServicePointManager]::SecurityProtocol =
+    [System.Net.SecurityProtocolType]::Tls12 -bor
+    [System.Net.SecurityProtocolType]::Tls13
 
-# ─────────────────────────────────────────────
-# Profile Resolution
-# ─────────────────────────────────────────────
-# Profiles are applied before individual flags.
-# Explicit flags passed alongside a profile are additive.
-# Profile sets the baseline -- individual flags expand on top.
+# Disable WAM broker before any module loads — prevents RuntimeBroker NullReferenceException
+$env:MSAL_ALLOW_BROKER        = '0'
+$env:MSAL_DISABLE_TOKENBROKER = '1'
+$env:MSAL_DISABLE_WAM         = '1'
 
-if ($P) {
-    switch ($P) {
+# Purview skipped by default — EOM v3.4 WAM broker crashes on background thread
+# Pass -IncludePurview to attempt it (works when running standalone PS7 window)
+if (-not $IncludePurview -and -not $SkipPurview) { $SkipPurview = $true }
 
-        'Quick' {
-            # Exchange only, NIST, no Graph -- fastest run for initial triage
-            if (-not $PSBoundParameters.ContainsKey('NoGraph')) { $NoGraph = $true }
-            if (-not $PSBoundParameters.ContainsKey('NIST'))    { $NIST    = $true }
-        }
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 
-        'Standard' {
-            # NIST + CIS with full Graph -- general purpose assessment
-            if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
-            if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
-            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
-            if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
-            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
-            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))        { $BreakGlass        = $true }
-            if (-not $PSBoundParameters.ContainsKey('IdentityHardening')) { $IdentityHardening = $true }
-            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))    { $GuestInventory    = $true }
-        }
-
-        'HIPAA' {
-            # Healthcare client -- dual-state HIPAA gap analysis, full identity and email coverage
-            if (-not $PSBoundParameters.ContainsKey('HIPAA'))             { $HIPAA             = $true }
-            if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))      { $HIPAAProposed     = $true }
-            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
-            if (-not $PSBoundParameters.ContainsKey('DMARC'))              { $DMARC             = $true }
-            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))    { $SharedMailboxes   = $true }
-            if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport         = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))         { $AdminRoles        = $true }
-            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))      { $StaleAccounts     = $true }
-            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))         { $BreakGlass        = $true }
-            if (-not $PSBoundParameters.ContainsKey('IdentityHardening'))  { $IdentityHardening = $true }
-            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening'))  { $MailFlowHardening = $true }
-            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))     { $GuestInventory    = $true }
-        }
-
-        'MSP' {
-            # MSP tenant assessment -- NIST + CIS with full tenant hygiene inventory
-            if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
-            if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
-            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
-            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
-            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))    { $GuestInventory    = $true }
-            if (-not $PSBoundParameters.ContainsKey('DMARC'))             { $DMARC             = $true }
-            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))   { $SharedMailboxes   = $true }
-            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))        { $DNSRecords        = $true }
-            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening')) { $MailFlowHardening = $true }
-            if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
-            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))        { $BreakGlass        = $true }
-            if (-not $PSBoundParameters.ContainsKey('IdentityHardening')) { $IdentityHardening = $true }
-            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))    { $NamedLocations    = $true }
-            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals')) { $ServicePrincipals = $true }
-            if (-not $PSBoundParameters.ContainsKey('SecureScore'))       { $SecureScore       = $true }
-        }
-
-        'ZeroTrust' {
-            # Zero Trust posture assessment -- identity, devices, network, and data pillars
-            if (-not $PSBoundParameters.ContainsKey('NIST'))              { $NIST              = $true }
-            if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))         { $ZeroTrust         = $true }
-            if (-not $PSBoundParameters.ContainsKey('CIS'))               { $CIS               = $true }
-            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
-            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))    { $NamedLocations    = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))        { $AdminRoles        = $true }
-            if (-not $PSBoundParameters.ContainsKey('MFAReport'))         { $MFAReport         = $true }
-            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals')) { $ServicePrincipals = $true }
-            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))     { $StaleAccounts     = $true }
-            if (-not $PSBoundParameters.ContainsKey('IdentityHardening')) { $IdentityHardening = $true }
-            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))        { $BreakGlass        = $true }
-            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))    { $GuestInventory    = $true }
-            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))   { $SharedMailboxes   = $true }
-            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))        { $DNSRecords        = $true }
-            if (-not $PSBoundParameters.ContainsKey('DMARC'))             { $DMARC             = $true }
-            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening')) { $MailFlowHardening = $true }
-            if (-not $PSBoundParameters.ContainsKey('SecureScore'))       { $SecureScore       = $true }
-        }
-
-        'Full' {
-            # Everything -- all frameworks, all features, all inventory
-            if (-not $PSBoundParameters.ContainsKey('NIST'))               { $NIST               = $true }
-            if (-not $PSBoundParameters.ContainsKey('CIS'))                { $CIS                = $true }
-            if (-not $PSBoundParameters.ContainsKey('HIPAA'))              { $HIPAA              = $true }
-            if (-not $PSBoundParameters.ContainsKey('HIPAAProposed'))      { $HIPAAProposed      = $true }
-            if (-not $PSBoundParameters.ContainsKey('ISO'))               { $ISO               = $true }
-            if (-not $PSBoundParameters.ContainsKey('ZeroTrust'))          { $ZeroTrust          = $true }
-            if (-not $PSBoundParameters.ContainsKey('SecureScore'))        { $SecureScore        = $true }
-            if (-not $PSBoundParameters.ContainsKey('MFAReport'))          { $MFAReport          = $true }
-            if (-not $PSBoundParameters.ContainsKey('AdminRoles'))         { $AdminRoles         = $true }
-            if (-not $PSBoundParameters.ContainsKey('StaleAccounts'))      { $StaleAccounts      = $true }
-            if (-not $PSBoundParameters.ContainsKey('GuestInventory'))     { $GuestInventory     = $true }
-            if (-not $PSBoundParameters.ContainsKey('NamedLocations'))     { $NamedLocations     = $true }
-            if (-not $PSBoundParameters.ContainsKey('ServicePrincipals'))  { $ServicePrincipals  = $true }
-            if (-not $PSBoundParameters.ContainsKey('DMARC'))              { $DMARC              = $true }
-            if (-not $PSBoundParameters.ContainsKey('SharedMailboxes'))    { $SharedMailboxes    = $true }
-            if (-not $PSBoundParameters.ContainsKey('DNSRecords'))         { $DNSRecords         = $true }
-            if (-not $PSBoundParameters.ContainsKey('MailFlowHardening'))  { $MailFlowHardening  = $true }
-            if (-not $PSBoundParameters.ContainsKey('IdentityHardening'))  { $IdentityHardening  = $true }
-            if (-not $PSBoundParameters.ContainsKey('BreakGlass'))         { $BreakGlass         = $true }
-        }
-    }
-    Write-Host "[*] Profile: $P applied" -ForegroundColor Cyan
-}
-
-# ─────────────────────────────────────────────
-# Custom Help Output
-# ─────────────────────────────────────────────
-
-if ($args -contains '--help' -or $args -contains '-h') {
-    Write-Host ''
-    Write-Host '================================================================' -ForegroundColor Cyan
-    Write-Host '  NextLayerSec M365 Assessment Framework v2' -ForegroundColor White
-    Write-Host '  nextlayersec.io' -ForegroundColor DarkGray
-    Write-Host '================================================================' -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host 'USAGE' -ForegroundColor Yellow
-    Write-Host '  .\Invoke-NLSAssessment.ps1 [flags]'
-    Write-Host ''
-    Write-Host 'CONNECTION' -ForegroundColor Yellow
-    Write-Host '  -UserPrincipalName     Admin UPN for Exchange Online and Graph'
-    Write-Host '  -SkipConnect           Skip connection if already authenticated'
-    Write-Host '  -ClearToken            Clear cached Graph token before connecting (fixes AccessDenied)'
-    Write-Host '  -NoGraph               Exchange Online only -- no Graph required'
-    Write-Host '  -Quick                 Skip sign-in log telemetry'
-    Write-Host '  -NoTelemetry           Same as -Quick'
-    Write-Host ''
-    Write-Host 'SETUP' -ForegroundColor Yellow
-    Write-Host '  -GenerateManifest      Generate SHA-256 hash manifest for module integrity baseline'
-    Write-Host '                         Run once after clean install or after updating modules'
-    Write-Host '  -DebugScoring          Surface verbose scoring errors -- use when investigating null/exception errors'
-    Write-Host ''
-    Write-Host 'FRAMEWORKS' -ForegroundColor Yellow
-    Write-Host '  -NIST                  NIST SP 800-53 Rev 5 Release 5.2.0'
-    Write-Host '  -CIS                   CIS Controls v8.1 June 2024'
-    Write-Host '  -HIPAA                 HIPAA Security Rule 45 CFR 164.312 (current)'
-    Write-Host '  -HIPAAProposed         HIPAA NPRM December 2024 (proposed -- final May 2026)'
-    Write-Host '  -ZeroTrust             CISA Zero Trust Maturity Model 2023'
-    Write-Host ''
-    Write-Host '  Pass one or more framework flags. Default is -NIST when none specified.' -ForegroundColor DarkGray
-    Write-Host '  Use -HIPAA -HIPAAProposed together for dual-state gap analysis.' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host 'FEATURES' -ForegroundColor Yellow
-    Write-Host '  -SecureScore           Microsoft Secure Score integration'
-    Write-Host '                         Requires SecurityEvents.Read.All scope'
-    Write-Host '  -MFAReport             Per-user MFA registration status'
-    Write-Host '                         Requires Reports.Read.All scope'
-    Write-Host '  -OpenReport            Auto-open AssessmentSummary.md on completion'
-    Write-Host ''
-    Write-Host 'OUTPUT' -ForegroundColor Yellow
-    Write-Host '  -RedactSensitiveData   Scrub UPNs, GUIDs, and IPs from all output'
-    Write-Host ''
-    Write-Host 'PROFILES  (-P <name>)' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host '  Quick' -ForegroundColor White -NoNewline
-    Write-Host '       Exchange only, no Graph, NIST citations -- fastest initial triage'
-    Write-Host '  Standard' -ForegroundColor White -NoNewline
-    Write-Host '     NIST + CIS, full Graph -- general purpose assessment'
-    Write-Host '  HIPAA' -ForegroundColor White -NoNewline
-    Write-Host '        HIPAA current + proposed, MFAReport, AdminRoles, DMARC, SharedMailboxes'
-    Write-Host '  MSP' -ForegroundColor White -NoNewline
-    Write-Host '          NIST + CIS, AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes'
-    Write-Host '  ZeroTrust' -ForegroundColor White -NoNewline
-    Write-Host '    NIST + ZeroTrust, NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts'
-    Write-Host '  Full' -ForegroundColor White -NoNewline
-    Write-Host '         All frameworks + all features'
-    Write-Host ''
-    Write-Host '  Profiles are additive. Extra flags passed alongside -P expand the profile.' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host 'EXAMPLES' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host '  Quick triage -- Exchange only, no Graph:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  MSP tenant assessment:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Healthcare client -- dual-state HIPAA, redacted:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Zero Trust posture assessment:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P ZeroTrust' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Full assessment -- everything, redacted:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Profile + extra flag (MSP with Secure Score added):'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Manual flags -- no profile:'
-    Write-Host '    .\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -NIST -CIS -HIPAA -HIPAAProposed' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host 'PERMISSIONS' -ForegroundColor Yellow
-    Write-Host '  Exchange Admin or Global Admin   Exchange Online collection'
-    Write-Host '  Policy.Read.ConditionalAccess    CA policy collection'
-    Write-Host '  Directory.Read.All               Graph directory access'
-    Write-Host '  AuditLog.Read.All                Sign-in telemetry (Full mode)'
-    Write-Host '  Reports.Read.All                 User MFA registration (-MFAReport)'
-    Write-Host '  SecurityEvents.Read.All          Secure Score (-SecureScore)'
-    Write-Host ''
-    Write-Host 'TROUBLESHOOTING' -ForegroundColor Yellow
-    Write-Host '  CA Partial on Global Admin -- stale token:'
-    Write-Host '    Disconnect-MgGraph; Remove-Item "$env:USERPROFILE\.mg" -Recurse -Force' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Defender cmdlets not found -- licensing gap:'
-    Write-Host '    Tenant requires M365 Business Premium or Defender for O365 Plan 1+' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  Script blocked on first run:'
-    Write-Host '    Unblock-File -Path .\Invoke-NLSAssessment.ps1; Unblock-File -Path .\Modules\*.psm1' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '================================================================' -ForegroundColor Cyan
-    Write-Host '  See README.md for full documentation' -ForegroundColor DarkGray
-    Write-Host '================================================================' -ForegroundColor Cyan
-    Write-Host ''
-    exit 0
-}
-
-# ─────────────────────────────────────────────
-# Hard Runtime Safeguard Banner
-# ─────────────────────────────────────────────
-
-Write-Host ''
-Write-Host '================================================================' -ForegroundColor DarkRed
-Write-Host ' READ-ONLY ASSESSMENT INSTRUMENT' -ForegroundColor Red
-Write-Host ' - No tenant configuration changes will be made.' -ForegroundColor Gray
-Write-Host ' - Results depend on RBAC, licensing, and API visibility.' -ForegroundColor Gray
-Write-Host ' - Missing telemetry is NOT equivalent to missing policy.' -ForegroundColor Gray
-Write-Host ' - Do not run against production tenants without authorization.' -ForegroundColor Gray
-Write-Host '================================================================' -ForegroundColor DarkRed
-Write-Host ''
-
-# ─────────────────────────────────────────────
-# Operator Mode Resolution
-# ─────────────────────────────────────────────
-
-$runTelemetry  = -not ($Quick -or $NoTelemetry -or $NoGraph)
-$runGraph      = -not $NoGraph
-$runRedaction  = [bool]$RedactSensitiveData
-$runSecScore          = [bool]$SecureScore -and $runGraph
-$runMFAReport         = [bool]$MFAReport -and $runGraph
-$runAdminRoles        = [bool]$AdminRoles -and $runGraph
-$runStaleAccounts     = [bool]$StaleAccounts -and $runGraph
-$runGuestInventory    = [bool]$GuestInventory -and $runGraph
-$runNamedLocations    = [bool]$NamedLocations -and $runGraph
-$runServicePrincipals = [bool]$ServicePrincipals -and $runGraph
-$runDMARC             = [bool]$DMARC
-$runSharedMailboxes   = [bool]$SharedMailboxes
-$runDNSRecords        = [bool]$DNSRecords
-$runMailFlowHardening = [bool]$MailFlowHardening
-$runIdentityHardening = [bool]$IdentityHardening -and $runGraph
-$runBreakGlass        = [bool]$BreakGlass -and $runGraph
-
-if ($P) {
-    Write-Host "[*] Profile: $P" -ForegroundColor Cyan
-}
-Write-Host '[*] Execution Mode: ' -NoNewline -ForegroundColor Cyan
-if ($NoGraph) {
-    Write-Host 'EXCHANGE ONLY (No Graph) ' -NoNewline -ForegroundColor Yellow
-} elseif ($Quick -or $NoTelemetry) {
-    Write-Host 'QUICK (No Telemetry) ' -NoNewline -ForegroundColor Yellow
-} elseif ($P) {
-    Write-Host "$P " -NoNewline -ForegroundColor Green
-} else {
-    Write-Host 'FULL ' -NoNewline -ForegroundColor Green
-}
-if ($runRedaction) { Write-Host '| REDACTED OUTPUT ' -NoNewline -ForegroundColor Magenta }
-Write-Host ''
-
-Write-Host '[*] Frameworks: ' -NoNewline -ForegroundColor Cyan
-$activeFrameworks = @()
-if (-not ($NIST -or $CIS -or $HIPAA -or $HIPAAProposed -or $ZeroTrust)) {
-    $activeFrameworks += 'NIST (default)'
-} else {
-    if ($NIST)          { $activeFrameworks += 'NIST' }
-    if ($CIS)           { $activeFrameworks += 'CIS' }
-    if ($HIPAA)         { $activeFrameworks += 'HIPAA Current' }
-    if ($HIPAAProposed) { $activeFrameworks += 'HIPAA Proposed' }
-    if ($ZeroTrust)     { $activeFrameworks += 'Zero Trust' }
-    if ($ISO)           { $activeFrameworks += 'ISO 27001:2022' }
-}
-Write-Host ($activeFrameworks -join ', ') -ForegroundColor White
-
-Write-Host '[*] Features: ' -NoNewline -ForegroundColor Cyan
-$activeFeatures = @()
-if ($runSecScore)          { $activeFeatures += 'Secure Score' }
-if ($runMFAReport)         { $activeFeatures += 'MFA Report' }
-if ($runAdminRoles)        { $activeFeatures += 'Admin Roles' }
-if ($runStaleAccounts)     { $activeFeatures += 'Stale Accounts' }
-if ($runGuestInventory)    { $activeFeatures += 'Guest Inventory' }
-if ($runNamedLocations)    { $activeFeatures += 'Named Locations' }
-if ($runServicePrincipals) { $activeFeatures += 'Service Principals' }
-if ($runDMARC)             { $activeFeatures += 'DMARC' }
-if ($runSharedMailboxes)   { $activeFeatures += 'Shared Mailboxes' }
-if ($runDNSRecords)        { $activeFeatures += 'DNS Records' }
-if ($runMailFlowHardening) { $activeFeatures += 'Mail Flow Hardening' }
-if ($runIdentityHardening) { $activeFeatures += 'Identity Hardening' }
-if ($runBreakGlass)        { $activeFeatures += 'Break Glass' }
-if ($activeFeatures.Count -gt 0) {
-    Write-Host ($activeFeatures -join ', ') -ForegroundColor White
-} else {
-    Write-Host 'Standard' -ForegroundColor White
-}
-Write-Host ''
-
-# ─────────────────────────────────────────────
-# Prerequisite Validation
-# ─────────────────────────────────────────────
-
-Write-Host '[-] Validating prerequisites...' -ForegroundColor DarkGray
-
-$requiredModules = @('ExchangeOnlineManagement')
-if ($runGraph) {
-    $requiredModules += 'Microsoft.Graph.Authentication'
-    if ($runTelemetry) { $requiredModules += 'Microsoft.Graph.Identity.SignIns' }
-}
-
-$missingModules = foreach ($mod in $requiredModules) {
-    if (-not (Get-Module -ListAvailable -Name $mod)) { $mod }
-}
-
-if ($missingModules) {
-    Write-Host "[!] Missing required modules: $($missingModules -join ', ')" -ForegroundColor Red
-    Write-Host ''
-    Write-Host '    Install with:' -ForegroundColor Gray
-    foreach ($mod in $missingModules) {
-        Write-Host "    Install-Module -Name $mod -Scope CurrentUser -Force" -ForegroundColor Gray
-    }
-    Write-Host ''
-    exit 1
-}
-
-Write-Host '  [+] All required modules present' -ForegroundColor Green
-
-# ─────────────────────────────────────────────
-# Module Loading
-# ─────────────────────────────────────────────
-
-$scriptDir  = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-$modulesDir = Join-Path $scriptDir 'Modules'
-
-if (-not (Test-Path $modulesDir)) {
-    Write-Host "[!] Modules directory not found at: $modulesDir" -ForegroundColor Red
-    exit 1
-}
-
-$moduleFiles = Get-ChildItem -Path $modulesDir -Filter '*.psm1' -ErrorAction Stop
-if ($moduleFiles.Count -eq 0) {
-    Write-Host '[!] No .psm1 files found in Modules directory' -ForegroundColor Red
-    exit 1
-}
-
-foreach ($mod in $moduleFiles) {
-    try {
-        Import-Module $mod.FullName -Force -ErrorAction Stop
-        Write-Host "  [+] Loaded: $($mod.Name)" -ForegroundColor DarkGray
-    } catch {
-        Write-Host "  [!] Failed to load module $($mod.Name): $_" -ForegroundColor Red
-        exit 1
-    }
-}
-
-# Always regenerate hash manifest -- keeps baseline current after any file update
-# -GenerateManifest flag retained for explicit standalone manifest generation
-Write-Host '[-] Updating module hash manifest...' -ForegroundColor DarkGray
-$null = New-NLSModuleHashManifest -ModulesPath $modulesDir
-Write-Host '  [+] Manifest updated' -ForegroundColor DarkGray
-
-if ($GenerateManifest) {
-    Write-Host '  [+] Manifest generated. Modules directory baseline recorded.' -ForegroundColor Green
-    exit 0
-}
-
-# Module integrity check -- path verification (hash check is baseline for next run)
-$integrityCheck = Test-NLSModuleIntegrity -ExpectedModulesPath $modulesDir
-if (-not $integrityCheck.Passed) {
-    Write-Host '[!] MODULE INTEGRITY VIOLATION DETECTED' -ForegroundColor Red
-    foreach ($v in $integrityCheck.Violations) {
-        Write-Host "    $($v.Module) loaded from unexpected path: $($v.LoadedFrom)" -ForegroundColor Red
-    }
-    Write-Host '    Aborting. Verify Modules directory has not been tampered with.' -ForegroundColor Red
-    exit 1
-}
-Write-Host '  [+] Module integrity verified' -ForegroundColor DarkGray
-if ($integrityCheck.Warnings) {
-    foreach ($w in $integrityCheck.Warnings) {
-        Write-Host "  [!] $w" -ForegroundColor Yellow
-    }
-}
-
-# ─────────────────────────────────────────────
-# Output Directory Setup
-# ─────────────────────────────────────────────
-
-# Build tenant name from UPN for filename
-$tenantName = if ($UserPrincipalName -and $UserPrincipalName -match '@(.+)') {
-    # Extract domain, strip TLD, use first segment
-    $domain = $Matches[1] -split '\.' | Select-Object -First 1
-    $domain.ToLower() -replace '[^a-z0-9]', ''
-} elseif ($SkipConnect) {
-    'tenant'
-} else {
-    'unknown'
-}
-
-$dateStamp  = (Get-Date).ToString('yyyyMMdd')
-$reportName = "$tenantName-$dateStamp"
-$outDir     = Join-Path $scriptDir "output"
-
+# ── Pre-banner version probe ─────────────────────────────────────────────────
+# Read ModuleVersion from the manifest BEFORE the module is imported so the
+# banner version stays in lockstep with the .psd1 / .psm1 single source of
+# truth. Falls back to 'unknown' if the manifest can't be parsed — the import
+# step below will then fail loudly and exit anyway.
+$script:NLSAssessmentVersion = 'unknown'
 try {
-    New-Item -Path $outDir -ItemType Directory -Force | Out-Null
-    $pathProtected = Protect-NLSOutputPath -OutputPath $outDir
-    if ($pathProtected) {
-        Write-Host "  [+] Output directory: $outDir (permissions locked)" -ForegroundColor DarkGray
-    } else {
-        Write-Host "  [+] Output directory: $outDir" -ForegroundColor DarkGray
-    }
-} catch {
-    Write-Host "[!] Failed to create output directory: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
-
-# ─────────────────────────────────────────────
-# Connection Bootstrap
-# ─────────────────────────────────────────────
-
-if (-not $SkipConnect) {
-    $upn = if ($UserPrincipalName) { $UserPrincipalName } else { Read-Host 'Enter Admin UPN' }
-
-    # Validate UPN format before connecting
-    $upnValidation = Test-NLSInputUPN -UPN $upn
-    if (-not $upnValidation.Valid) {
-        Write-Host "[!] Invalid UPN: $($upnValidation.Reason)" -ForegroundColor Red
-        exit 1
-    }
-
-    Write-Host ''
-    Write-Host '[-] Establishing read-only connections...' -ForegroundColor DarkGray
-
-    try {
-        Connect-ExchangeOnline -UserPrincipalName $upn -ShowBanner:$false -ErrorAction Stop
-        Write-Host '  [+] Exchange Online connected' -ForegroundColor Green
-    } catch {
-        Write-Host "  [!] Exchange Online connection failed: $($_.Exception.Message)" -ForegroundColor Red
-        exit 1
-    }
-
-    if ($runGraph) {
-        # Always disconnect stale session; if -ClearToken passed also wipe WAM cache
-        try { $null = Disconnect-MgGraph -ErrorAction SilentlyContinue 2>$null } catch { }
-        if ($ClearToken) {
-            Write-Host '  [*] Clearing cached Graph token...' -ForegroundColor DarkGray
-            Remove-Item -Path "$env:USERPROFILE\.mg" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$env:LOCALAPPDATA\Microsoft\TokenCache" -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Host '  [+] Token cache cleared' -ForegroundColor Green
-        }
-
-        $graphScopes = @(
-            'Policy.Read.ConditionalAccess',
-            'Policy.Read.All',
-            'Directory.Read.All'
-        )
-        if ($runTelemetry)  { $graphScopes += 'AuditLog.Read.All' }
-        if ($runMFAReport)  { $graphScopes += 'Reports.Read.All' }
-        if ($runSecScore)   { $graphScopes += 'SecurityEvents.Read.All' }
-
-        try {
-            Connect-MgGraph -Scopes $graphScopes -NoWelcome -ErrorAction Stop
-            Write-Host '  [+] Microsoft Graph connected' -ForegroundColor Green
-        } catch {
-            Write-Host "  [!] Microsoft Graph connection failed: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host '      Conditional Access checks will be unavailable.' -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host '  [!] Graph skipped (-NoGraph). Exchange Online only.' -ForegroundColor Yellow
-    }
-}
-
-Write-Host ''
-
-# ─────────────────────────────────────────────
-# Data Collection
-# ─────────────────────────────────────────────
-
-Write-Host '[-] Collecting Exchange Online policies...' -ForegroundColor DarkGray
-$exchangeResults = Get-NLSExchangePolicies -Redact $runRedaction
-
-# Initialize all result variables
-$caResults                = @{}
-$caTelemetryResults       = @{}
-$mfaStatusResults         = @{}
-$secureScoreResults       = @{}
-$adminRoleResults         = @{}
-$staleAccountResults      = @{}
-$guestResults             = @{}
-$namedLocationResults     = @{}
-$servicePrincipalResults  = @{}
-$dmarcResults             = @{}
-$sharedMailboxResults     = @{}
-$dnsRecordResults         = @{}
-$mailFlowResults          = @{}
-$identityHardeningResults = @{}
-$breakGlassResults        = @{}
-
-if ($runDMARC) {
-    Write-Host '[-] Collecting DMARC policy status...' -ForegroundColor DarkGray
-    $dmarcResults = Get-NLSDMARCStatus -Redact $runRedaction
-} else {
-    Register-NLSCoverage -ControlFamily 'DMARC' `
-        -Status 'NotCollected' -Reason 'Operator did not pass -DMARC flag'
-    $dmarcResults = @{}
-}
-
-if ($runSharedMailboxes) {
-    Write-Host '[-] Collecting shared mailbox hardening status...' -ForegroundColor DarkGray
-    $sharedMailboxResults = Get-NLSSharedMailboxHardening -Redact $runRedaction
-} else {
-    Register-NLSCoverage -ControlFamily 'SharedMailboxHardening' `
-        -Status 'NotCollected' -Reason 'Operator did not pass -SharedMailboxes flag'
-    $sharedMailboxResults = @{}
-}
-
-if ($runDNSRecords) {
-    Write-Host '[-] Looking up DNS email records (SPF, DMARC, DKIM)...' -ForegroundColor DarkGray
-    $dnsRecordResults = Get-NLSDNSEmailRecords -Redact $runRedaction -DebugMode ([bool]$DebugDNS)
-} else {
-    Register-NLSCoverage -ControlFamily 'DNSEmailRecords' `
-        -Status 'NotCollected' -Reason 'Operator did not pass -DNSRecords flag'
-    $dnsRecordResults = @{}
-}
-
-if ($runMailFlowHardening) {
-    Write-Host '[-] Collecting mail flow hardening status...' -ForegroundColor DarkGray
-    $mailFlowResults = Get-NLSMailFlowHardening -Redact $runRedaction
-} else {
-    Register-NLSCoverage -ControlFamily 'MTASTS' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
-    Register-NLSCoverage -ControlFamily 'InboundSpam' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
-    Register-NLSCoverage -ControlFamily 'MalwareFilter' -Status 'NotCollected' -Reason 'Operator did not pass -MailFlowHardening flag'
-}
-
-if ($runGraph) {
-    Write-Host '[-] Collecting Conditional Access policies...' -ForegroundColor DarkGray
-    $caResults = Get-NLSConditionalAccessPolicies -Redact $runRedaction
-
-    if ($runTelemetry) {
-        Write-Host '[-] Collecting sign-in log telemetry...' -ForegroundColor DarkGray
-        $caTelemetryResults = Get-NLSConditionalAccessTelemetry -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'ConditionalAccessTelemetry' `
-            -Status 'NotCollected' -Reason 'Operator specified -Quick or -NoTelemetry'
-        Write-Host '  [!] Telemetry skipped (Quick/NoTelemetry mode)' -ForegroundColor Yellow
-    }
-
-    if ($runMFAReport) {
-        Write-Host '[-] Collecting user MFA registration status...' -ForegroundColor DarkGray
-        $mfaStatusResults = Get-NLSUserMFAStatus -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'UserMFAStatus' `
-            -Status 'NotCollected' -Reason 'Operator did not pass -MFAReport flag'
-    }
-
-    if ($runSecScore) {
-        Write-Host '[-] Collecting Microsoft Secure Score...' -ForegroundColor DarkGray
-        $secureScoreResults = Get-NLSSecureScore -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'SecureScore' `
-            -Status 'NotCollected' -Reason 'Operator did not pass -SecureScore flag'
-    }
-
-    if ($runAdminRoles) {
-        Write-Host '[-] Collecting admin role inventory...' -ForegroundColor DarkGray
-        $adminRoleResults = Get-NLSAdminRoleInventory -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'AdminRoleInventory' `
-            -Status 'NotCollected' -Reason 'Operator did not pass -AdminRoles flag'
-    }
-
-    if ($runStaleAccounts) {
-        Write-Host '[-] Collecting stale account data...' -ForegroundColor DarkGray
-        $staleAccountResults = Get-NLSStaleAccounts -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'StaleAccounts' `
-            -Status 'NotCollected' -Reason 'Operator did not pass -StaleAccounts flag'
-    }
-
-    if ($runGuestInventory) {
-        Write-Host '[-] Collecting guest account inventory...' -ForegroundColor DarkGray
-        $guestResults = Get-NLSGuestAccountInventory -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'GuestAccountInventory' `
-            -Status 'NotCollected' -Reason 'Operator did not pass -GuestInventory flag'
-    }
-
-    if ($runNamedLocations) {
-        Write-Host '[-] Collecting named locations...' -ForegroundColor DarkGray
-        $namedLocationResults = Get-NLSNamedLocations -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'NamedLocations' `
-            -Status 'NotCollected' -Reason 'Operator did not pass -NamedLocations flag'
-    }
-
-    if ($runServicePrincipals) {
-        Write-Host '[-] Collecting service principal inventory...' -ForegroundColor DarkGray
-        $servicePrincipalResults = Get-NLSServicePrincipalInventory -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'ServicePrincipalInventory' `
-            -Status 'NotCollected' -Reason 'Operator did not pass -ServicePrincipals flag'
-    }
-
-    if ($runIdentityHardening) {
-        Write-Host '[-] Collecting identity hardening status...' -ForegroundColor DarkGray
-        $identityHardeningResults = Get-NLSIdentityHardening -Redact $runRedaction
-    } else {
-        foreach ($family in @('SecurityDefaults','PasswordProtection','SSPR','AuthenticationMethods','ConsentFramework','ExternalCollaboration','PIM')) {
-            Register-NLSCoverage -ControlFamily $family -Status 'NotCollected' -Reason 'Operator did not pass -IdentityHardening flag'
-        }
-    }
-
-    if ($runBreakGlass) {
-        Write-Host '[-] Checking break-glass account configuration...' -ForegroundColor DarkGray
-        $breakGlassResults = Get-NLSBreakGlassAccount -Redact $runRedaction
-    } else {
-        Register-NLSCoverage -ControlFamily 'BreakGlassAccounts' -Status 'NotCollected' -Reason 'Operator did not pass -BreakGlass flag'
-    }
-} else {
-    Register-NLSCoverage -ControlFamily 'ConditionalAccess' `
-        -Status 'NotCollected' -Reason 'Operator specified -NoGraph'
-    Register-NLSCoverage -ControlFamily 'ConditionalAccessTelemetry' `
-        -Status 'NotCollected' -Reason 'Operator specified -NoGraph'
-    Register-NLSCoverage -ControlFamily 'UserMFAStatus' `
-        -Status 'NotCollected' -Reason 'Operator specified -NoGraph'
-    Register-NLSCoverage -ControlFamily 'SecureScore' `
-        -Status 'NotCollected' -Reason 'Operator specified -NoGraph'
-    Write-Host '  [!] CA and Graph checks skipped (-NoGraph mode)' -ForegroundColor Yellow
-}
-
-Write-Host '[-] Collecting metadata...' -ForegroundColor DarkGray
-$profileLabel = if ($P) { $P } else { 'Custom' }
-$metadata = Get-NLSMetadata `
-    -Redact $runRedaction `
-    -ActiveFrameworks $activeFrameworks `
-    -ActiveFeatures $activeFeatures `
-    -ExecutionMode $profileLabel
-
-Write-Host ''
-
-# License inventory -- always collected when Graph is available
-$licenseResults = @{}
-if ($runGraph) {
-    Write-Host '[-] Collecting license inventory...' -ForegroundColor DarkGray
-    $licenseResults = Get-NLSLicenseInventory
-}
-
-# ─────────────────────────────────────────────
-# Scoring
-# ─────────────────────────────────────────────
-
-Write-Host '[-] Applying scoring model...' -ForegroundColor DarkGray
-
-$allResults = @{
-    ExchangePolicies           = $exchangeResults
-    ConditionalAccess          = $caResults
-    ConditionalAccessTelemetry = $caTelemetryResults
-    DMARC                      = $dmarcResults
-    SharedMailboxes            = $sharedMailboxResults
-    MailFlow                   = $mailFlowResults
-    IdentityHardening          = $identityHardeningResults
-    BreakGlass                 = $breakGlassResults
-    StaleAccounts              = $staleAccountResults
-    AdminRoles                 = $adminRoleResults
-    NamedLocations             = $namedLocationResults
-    MFAStatus                  = $mfaStatusResults
-}
-
-# Pass framework flags directly from current variable values
-# PSBoundParameters check is NOT used here -- profiles set variables directly
-# so we read the variables, not the parameter binding state
-$anyFramework = [bool]$NIST -or [bool]$CIS -or [bool]$HIPAA -or [bool]$HIPAAProposed -or [bool]$ZeroTrust
-
-$scoringParams = @{
-    Results      = $allResults
-    Redact       = $runRedaction
-    NIST         = if ($anyFramework) { [bool]$NIST } else { $true } # Default to NIST if none passed
-    CIS          = [bool]$CIS
-    HIPAA        = [bool]$HIPAA
-    HIPAAProposed = [bool]$HIPAAProposed
-    ZeroTrust    = [bool]$ZeroTrust
-    ISO          = [bool]$ISO
-    DebugMode    = [bool]$DebugScoring
-}
-
-$scoredResults = Invoke-NLSScoringModel @scoringParams
-
-
-Write-Host ''
-
-# ─────────────────────────────────────────────
-# Reporting
-# ─────────────────────────────────────────────
-
-Write-Host '[-] Generating assessment artifacts...' -ForegroundColor DarkGray
-
-# Initialize delta data -- will be populated after report path is known
-$deltaData = [ordered]@{ Available = $false }
-
-$summaryPath    = Join-Path $outDir "$reportName.md"
-$exceptionsPath = Join-Path $outDir "$reportName-exceptions.md" 
-
-# Build extended data for reporting
-$extendedData = @{}
-if ($caResults -and $caResults['ConditionalAccess'])                               { $extendedData['ConditionalAccess']        = $caResults['ConditionalAccess'] }
-if ($mfaStatusResults -and $mfaStatusResults['UserMFAStatus'])                     { $extendedData['UserMFAStatus']            = $mfaStatusResults['UserMFAStatus'] }
-if ($secureScoreResults -and $secureScoreResults['SecureScore'])                   { $extendedData['SecureScore']              = $secureScoreResults['SecureScore'] }
-if ($adminRoleResults -and $adminRoleResults['AdminRoleInventory'])                 { $extendedData['AdminRoleInventory']       = $adminRoleResults['AdminRoleInventory'] }
-if ($staleAccountResults -and $staleAccountResults['StaleAccounts'])               { $extendedData['StaleAccounts']            = $staleAccountResults['StaleAccounts'] }
-if ($guestResults -and $guestResults['GuestAccountInventory'])                     { $extendedData['GuestAccountInventory']    = $guestResults['GuestAccountInventory'] }
-if ($namedLocationResults -and $namedLocationResults['NamedLocations'])            { $extendedData['NamedLocations']           = $namedLocationResults['NamedLocations'] }
-if ($servicePrincipalResults -and $servicePrincipalResults['ServicePrincipalInventory']) { $extendedData['ServicePrincipalInventory'] = $servicePrincipalResults['ServicePrincipalInventory'] }
-if ($dmarcResults -and $dmarcResults['DMARC'])                                     { $extendedData['DMARC']                    = $dmarcResults['DMARC'] }
-if ($sharedMailboxResults -and $sharedMailboxResults['SharedMailboxHardening'])    { $extendedData['SharedMailboxHardening']   = $sharedMailboxResults['SharedMailboxHardening'] }
-if ($dnsRecordResults)                                                              { $extendedData['DNSEmailRecords']          = $dnsRecordResults['DNSEmailRecords'] }
-if ($licenseResults -and $licenseResults['LicenseInventory'])                       { $extendedData['LicenseInventory']         = $licenseResults['LicenseInventory'] }
-if ($mailFlowResults -and $mailFlowResults['MTASTS'])                               { $extendedData['MTASTS']                   = $mailFlowResults['MTASTS'] }
-if ($mailFlowResults -and $mailFlowResults['InboundSpam'])                          { $extendedData['InboundSpam']              = $mailFlowResults['InboundSpam'] }
-if ($mailFlowResults -and $mailFlowResults['MalwareFilter'])                        { $extendedData['MalwareFilter']            = $mailFlowResults['MalwareFilter'] }
-if ($identityHardeningResults -and $identityHardeningResults['SecurityDefaults'])   { $extendedData['SecurityDefaults']         = $identityHardeningResults['SecurityDefaults'] }
-if ($identityHardeningResults -and $identityHardeningResults['AuthenticationMethods']) { $extendedData['AuthenticationMethods'] = $identityHardeningResults['AuthenticationMethods'] }
-if ($identityHardeningResults -and $identityHardeningResults['ConsentFramework'])   { $extendedData['ConsentFramework']         = $identityHardeningResults['ConsentFramework'] }
-if ($identityHardeningResults -and $identityHardeningResults['PIM'])               { $extendedData['PIM']                      = $identityHardeningResults['PIM'] }
-if ($breakGlassResults -and $breakGlassResults['BreakGlassAccounts'])              { $extendedData['BreakGlassAccounts']        = $breakGlassResults['BreakGlassAccounts'] }
-# ─────────────────────────────────────────────
-# Correlation Engine
-# ─────────────────────────────────────────────
-
-Write-Host '[-] Running correlation engine...' -ForegroundColor DarkGray
-$correlationFindings = @()
-if ($scoredResults -and $scoredResults['Findings']) {
-    $corrParams = @{
-        Findings     = $scoredResults['Findings']
-        ExtendedData = $extendedData
-        DebugMode    = [bool]$DebugScoring
-    }
-    $correlationFindings = Invoke-NLSCorrelationEngine @corrParams
-    $corrCount = $correlationFindings.Count
-    if ($corrCount -gt 0) {
-        foreach ($cf in $correlationFindings) {
-            [void]$scoredResults['Findings'].Add($cf)
-        }
-        Write-Host "  [+] $corrCount attack path correlation(s) identified" -ForegroundColor Yellow
-    }
-}
-
-
-if ($DebugAll) {
-    Write-Host '  [DEBUG] === allResults keys ===' -ForegroundColor DarkGray
-    foreach ($k in ($allResults.Keys | Sort-Object)) {
-        $v = $allResults[$k]
-        $d = if ($null -eq $v) { 'NULL' } elseif ($v -is [System.Collections.Specialized.OrderedDictionary]) { "[ordered]($($v.Keys.Count))" } elseif ($v -is [hashtable]) { "[hashtable]($($v.Keys.Count))" } else { $v.GetType().Name }
-        Write-Host "    $($k.PadRight(30)) $d" -ForegroundColor DarkGray
-    }
-    Write-Host '  [DEBUG] === extendedData keys ===' -ForegroundColor DarkGray
-    foreach ($k in ($extendedData.Keys | Sort-Object)) {
-        $v = $extendedData[$k]
-        $d = if ($null -eq $v) { 'NULL' } elseif ($v -is [System.Collections.Specialized.OrderedDictionary]) { "[ordered]($($v.Keys.Count)) keys: $($v.Keys -join ', ')" } elseif ($v -is [hashtable]) { "[hashtable]($($v.Keys.Count))" } else { $v.GetType().Name }
-        Write-Host "    $($k.PadRight(30)) $d" -ForegroundColor DarkGray
-    }
-    Write-Host '' -ForegroundColor DarkGray
-}
-
-Publish-NLSAssessmentSummary `
-    -ScoredResults $scoredResults `
-    -DebugDNS ([bool]$DebugDNS) `
-    -Metadata $metadata `
-    -Coverage (Get-NLSCoverageMap) `
-    -OutputPath $summaryPath `
-    -ExtendedData $extendedData `
-    -DeltaData $deltaData `
-    -Redact $runRedaction
-
-$exceptions = Get-NLSExceptions
-if ($null -eq $exceptions) { $exceptions = @() }
-
-Publish-NLSExceptionsList `
-    -Exceptions $exceptions `
-    -OutputPath $exceptionsPath `
-    -Redact $runRedaction
-
-# ── Remediation Script ────────────────────────────────────────
-$remediationPath = Join-Path $outDir "$reportName-remediation.ps1"
-[void](Publish-NLSRemediationScript `
-    -ScoredResults $scoredResults `
-    -OutputPath $remediationPath `
-    -TenantName $tenantName `
-    -Redact $runRedaction)
-
-# ── Delta Reporting ───────────────────────────────────────────
-
-# Try manual path first, then auto-find
-$previousReport = $null
-if ($Compare) {
-    if (-not (Test-Path $Compare)) {
-        Write-Host "[!] -Compare path not found: $($Compare | Split-Path -Leaf)" -ForegroundColor Red
-        exit 1
-    }
-    if ([System.IO.Path]::GetExtension($Compare) -ne '.md') {
-        Write-Host "[!] -Compare must point to a .md report file" -ForegroundColor Red
-        exit 1
-    }
-    $compareHeader = Get-Content $Compare -TotalCount 2 -ErrorAction SilentlyContinue
-    if (-not ($compareHeader -join '' -match 'NextLayerSec')) {
-        Write-Host "[!] -Compare file does not appear to be an NLS assessment report" -ForegroundColor Red
-        exit 1
-    }
-    $previousReport = $Compare
-    Write-Host "[-] Using specified previous report for delta..." -ForegroundColor DarkGray
-} else {
-    $previousReport = Find-NLSPreviousReport `
-        -OutputDir $outDir `
-        -TenantName $tenantName `
-        -CurrentReportPath $summaryPath
-    if ($previousReport) {
-        Write-Host "[-] Previous report found for delta: $(Split-Path $previousReport -Leaf)" -ForegroundColor DarkGray
-    }
-}
-
-if ($previousReport) {
-    $deltaData = Get-NLSDeltaReport `
-        -CurrentResults $scoredResults `
-        -PreviousReportPath $previousReport
-}
-
-# ─────────────────────────────────────────────
-# Summary Output
-# ─────────────────────────────────────────────
-
-$s = $scoredResults['Summary']
-
-Write-Host ''
-Write-Host '================================================================' -ForegroundColor DarkGray
-Write-Host '  Assessment Complete' -ForegroundColor White
-Write-Host '================================================================' -ForegroundColor DarkGray
-Write-Host "  Satisfied  $($s['Satisfied'])" -ForegroundColor Green
-Write-Host "  Partial    $($s['Partial'])"   -ForegroundColor $(if ($s['Partial'] -gt 0) { 'Yellow' } else { 'Green' })
-Write-Host "  Gap        $($s['Gap'])"       -ForegroundColor $(if ($s['Gap'] -gt 0) { 'Red' } else { 'Green' })
-Write-Host "  Total      $($s['Total'])"     -ForegroundColor White
-Write-Host ''
-Write-Host "  Report:      $outDir\$reportName.md" -ForegroundColor Cyan
-Write-Host "  Remediation: $outDir\$reportName-remediation.ps1" -ForegroundColor Cyan
-Write-Host "  Exceptions:  $outDir\$reportName-exceptions.md" -ForegroundColor DarkGray
-if ($deltaData['Available']) {
-    Write-Host "  Delta:       Improved $($deltaData['ImprovedCount'])  Regressed $($deltaData['RegressedCount'])  New $($deltaData['NewCount'])" -ForegroundColor Cyan
-}
-Write-Host ''
-
-# Auto-open report in VS Code if installed
-$reportFile = Join-Path $outDir "$reportName.md"
-try {
-    $vsCode = Get-Command code -ErrorAction SilentlyContinue
-    if ($vsCode -and (Test-Path $reportFile)) {
-        Write-Host '[-] Opening report in VS Code...' -ForegroundColor DarkGray
-        $null = Start-Process -FilePath 'code' -ArgumentList $reportFile -ErrorAction SilentlyContinue
-    } elseif ($OpenReport -and (Test-Path $reportFile)) {
-        Write-Host '[-] Opening report...' -ForegroundColor DarkGray
-        Start-Process $reportFile
-    }
+    $manifestData = Import-PowerShellDataFile -LiteralPath (Join-Path $scriptDir 'NLS-Assessment.psd1') -ErrorAction Stop
+    if ($manifestData.ModuleVersion) { $script:NLSAssessmentVersion = [string]$manifestData.ModuleVersion }
 } catch { }
 
-# ─────────────────────────────────────────────
-# Disconnect
-# ─────────────────────────────────────────────
+# ── Banner ────────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "================================================================" -ForegroundColor Cyan
+Write-Host " NLS-Assessment v$($script:NLSAssessmentVersion) — Read-Only M365 Security Assessment" -ForegroundColor Cyan
+Write-Host " NextLayerSec"                     -ForegroundColor Cyan
+Write-Host "================================================================" -ForegroundColor Cyan
+Write-Host ""
 
-if (-not $SkipConnect) {
-    try {
-        Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
-        if ($runGraph) { $null = Disconnect-MgGraph -ErrorAction SilentlyContinue 2>$null }
-        Write-Host '[-] Sessions disconnected.' -ForegroundColor DarkGray
-    } catch { }
+# ── Output path ───────────────────────────────────────────────────────────────
+# OWASP A01 / ASVS V12.3.1 — reject ..[/\\] path-traversal sequences before any
+# file operation. Also ensure the resolved path stays under the script directory
+# unless an absolute path was explicitly provided by the operator.
+if (-not $OutputPath) { $OutputPath = Join-Path $scriptDir 'output' }
+if ($OutputPath -match '\.\.[\\/]') {
+    throw "OutputPath rejected: contains '..[/\\]' traversal sequence."
+}
+if (-not (Test-Path -LiteralPath $OutputPath)) {
+    New-Item -LiteralPath $OutputPath -ItemType Directory -Force | Out-Null
+}
+# Resolve to absolute path so downstream auto-open / publish steps can verify
+# generated files via $resolvedOutput.StartsWith($resolvedOutput) bounds checks.
+$resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
+
+# ── Import module ─────────────────────────────────────────────────────────────
+Write-Host "[-] Loading NLS-Assessment module..." -ForegroundColor Cyan
+$manifestPath = Join-Path $scriptDir 'NLS-Assessment.psd1'
+try {
+    Import-Module $manifestPath -Force -ErrorAction Stop
+    Write-Host "  [+] Module loaded (v$($NLSAssessmentVersion))" -ForegroundColor Green
+} catch {
+    Write-Host "  [!] Module load failed: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
 }
 
-Write-Host ''
+Clear-NLSFindings
+
+# OWASP ASVS V7.3.2 — wrap the entire run in try/finally so service sessions
+# always disconnect, even if a collector / evaluator / publisher throws.
+try {
+
+# ── Module prerequisite check ─────────────────────────────────────────────────
+# EOM is pinned to 3.2.0 — 3.4.0+ has a WAM broker crash that kills the process
+# from a background .NET thread (uncatchable from PowerShell).
+$moduleSpecs = @(
+    @{ Name='Microsoft.Graph.Authentication'; MinVersion='2.0.0'; PinVersion=$null   }
+    @{ Name='ExchangeOnlineManagement';       MinVersion='3.0.0'; PinVersion='3.2.0' }
+    @{ Name='MicrosoftTeams';                 MinVersion='5.0.0'; PinVersion=$null   }
+)
+$needsAction = @()
+foreach ($spec in $moduleSpecs) {
+    $installed = Get-Module -ListAvailable -Name $spec.Name -ErrorAction SilentlyContinue |
+        Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $installed) {
+        $needsAction += @{ Spec=$spec; Action='install'; Current=$null }
+    } elseif ($spec.PinVersion -and $installed.Version -ne [version]$spec.PinVersion) {
+        $needsAction += @{ Spec=$spec; Action='repin'; Current=$installed.Version }
+    } elseif ($installed.Version -lt [version]$spec.MinVersion) {
+        $needsAction += @{ Spec=$spec; Action='upgrade'; Current=$installed.Version }
+    }
+}
+
+if ($needsAction.Count -gt 0) {
+    Write-Host ""
+    foreach ($n in $needsAction) {
+        $name = $n.Spec.Name
+        if ($n.Action -eq 'install') {
+            Write-Host "  [!] Missing: $name" -ForegroundColor Yellow
+        } elseif ($n.Action -eq 'repin') {
+            Write-Host "  [!] $name $($n.Current) installed — recommended: $($n.Spec.PinVersion)" -ForegroundColor Yellow
+            if ([version]$n.Current -gt [version]$n.Spec.PinVersion) {
+                Write-Host "      Version $($n.Current) has known crash bugs in this tool's auth flow." -ForegroundColor DarkYellow
+            }
+        }
+    }
+    if ($NonInteractive) {
+        Write-Host "  [!] NonInteractive — run .\Install-NLSPrerequisites.ps1 manually then retry." -ForegroundColor Red
+        exit 1
+    }
+    $install = Read-Host "  Install/fix modules now? [Y/N]"
+    if ($install -match '^[Yy]') {
+        foreach ($n in $needsAction) {
+            $name = $n.Spec.Name
+            $targetVer = $n.Spec.PinVersion
+            try {
+                if ($n.Action -eq 'repin' -and [version]$n.Current -gt [version]$n.Spec.PinVersion) {
+                    Write-Host "  [*] Downgrading $name $($n.Current) -> $targetVer..." -ForegroundColor Cyan
+                    Uninstall-PSResource -Name $name -ErrorAction SilentlyContinue
+                }
+                if ($targetVer) {
+                    Write-Host "  [*] Installing $name $targetVer..." -ForegroundColor Cyan
+                    Install-PSResource -Name $name -Version $targetVer -TrustRepository -Scope CurrentUser -Reinstall -ErrorAction Stop
+                } else {
+                    Write-Host "  [*] Installing $name (latest)..." -ForegroundColor Cyan
+                    Install-PSResource -Name $name -TrustRepository -Scope CurrentUser -ErrorAction Stop
+                }
+                Write-Host "  [+] $name ready" -ForegroundColor Green
+            } catch {
+                Write-Host "  [!] $name failed: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+    } else {
+        Write-Host "  [!] Skipping. Run .\Install-NLSPrerequisites.ps1 to set up manually." -ForegroundColor Yellow
+    }
+}
+
+# ── FromResults mode — skip collection, just republish ───────────────────────
+if ($FromResults -and (Test-Path -LiteralPath $FromResults)) {
+    Write-Host "[-] FromResults mode — regenerating reports from $FromResults" -ForegroundColor Cyan
+    $priorData = Get-Content -LiteralPath $FromResults -Raw -Encoding utf8 | ConvertFrom-Json
+    $findings = [object[]]@($priorData.Findings)
+    $conn = if ($priorData.Connections) { @{} + $priorData.Connections } else { @{} }
+    $reportMetadata = if ($priorData.Metadata) { @{} + $priorData.Metadata } else {
+        @{ TenantDomain='Unknown'; AssessmentDate=(Get-Date -Format 'MMMM dd, yyyy'); ToolVersion=$script:NLSAssessmentVersion }
+    }
+    $tenantTag = if ($reportMetadata.TenantDomain) { ($reportMetadata.TenantDomain -split '\.')[0] } else { 'tenant' }
+    # OWASP A01 — strip any non-[a-zA-Z0-9-] before using tenantTag in a file path
+    $tenantTag = $tenantTag -replace '[^a-zA-Z0-9-]', ''
+    if (-not $tenantTag) { $tenantTag = 'tenant' }
+    $baseName = "$tenantTag-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    Write-Host "  [+] Loaded $($findings.Count) findings" -ForegroundColor Green
+    $skipCollection = $true
+} else {
+    $skipCollection = $false
+}
+
+if (-not $skipCollection) {
+    # ── Connect to services ──────────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "[-] Connecting to M365 services..." -ForegroundColor Cyan
+
+    $connectParams = @{}
+    if ($AppId -and $TenantId -and $CertificateThumbprint) {
+        $connectParams['AppId']                  = $AppId
+        $connectParams['TenantId']               = $TenantId
+        $connectParams['CertificateThumbprint']  = $CertificateThumbprint
+        if ($OrganizationDomain) { $connectParams['OrganizationDomain'] = $OrganizationDomain }
+    } elseif ($UserPrincipalName) {
+        $connectParams['UserPrincipalName'] = $UserPrincipalName
+    }
+    if ($SkipPurview) { $connectParams['SkipPurview'] = $true }
+    if ($SkipTeams)   { $connectParams['SkipTeams']   = $true }
+    $connectParams['SkipSharePoint'] = $true  # SharePoint via Graph
+
+    $rawConn = @(Connect-NLSServices @connectParams)
+    $conn = $rawConn | Where-Object { $_ -is [hashtable] } | Select-Object -Last 1
+    if (-not $conn) {
+        $conn = @{ Graph=$false; EXO=$false; IPPSSession=$false; Teams=$false; SharePoint=$false }
+    }
+    # Exit-code spec (v4.6.3 P2): exit 1 on auth failure means no Graph/EXO
+    # at all. The downstream collectors will skip silently but the result
+    # would be useless — fail loudly here so batch runners can flag the
+    # client as auth-broken in their summary.
+    if (-not $conn.Graph -and -not $conn.EXO) {
+        Write-Host "  [!] Connect-NLSServices returned no usable session (Graph and EXO both unavailable)." -ForegroundColor Red
+        $script:NLSFatalExitCode = 1
+        throw [System.InvalidOperationException]::new('Authentication failure: no Graph or EXO session available.')
+    }
+    if (-not $conn.ContainsKey('SharePoint')) { $conn['SharePoint'] = $false }
+
+    if ($WhatIfConnections) {
+        Write-Host ""
+        Write-Host "Connections (WhatIf mode):" -ForegroundColor Yellow
+        $conn | Format-Table -AutoSize
+        return
+    }
+
+    # ── Run collectors ───────────────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "[-] Running collectors..." -ForegroundColor Cyan
+
+    function Invoke-NLSCollector { param([string]$fn)
+        if (Get-Command $fn -ErrorAction SilentlyContinue) {
+            try { & $fn | Out-Null }
+            catch { Write-Warning "Collector $fn failed: $($_.Exception.Message.Split([char]10)[0])" }
+        }
+    }
+
+    if ($conn.Graph) {
+        Write-Host "  [*] AAD: Auth + authorization policies..."
+        Invoke-NLSCollector 'Invoke-NLSCollectAADAuthPolicies'
+        Write-Host "  [*] AAD: Conditional Access policies..."
+        Invoke-NLSCollector 'Invoke-NLSCollectAADCAPolicies'
+        Write-Host "  [*] AAD: Users and MFA registration state..."
+        Invoke-NLSCollector 'Invoke-NLSCollectAADUsers'
+        Write-Host "  [*] AAD: Directory role assignments..."
+        Invoke-NLSCollector 'Invoke-NLSCollectAADRoles'
+        Write-Host "  [*] AAD: PIM eligible and active schedules..."
+        Invoke-NLSCollector 'Invoke-NLSCollectAADPIM'
+        Invoke-NLSCollector 'Invoke-NLSCollectAADIdentityGovernance'
+        Write-Host "  [*] AAD: Inventory (guests, stale, OAuth, Secure Score)..."
+        Invoke-NLSCollector 'Invoke-NLSCollectAADInventory'
+
+        if (-not $SkipSharePoint) {
+            Write-Host "  [*] SharePoint: Tenant settings via Graph..."
+            Invoke-NLSCollector 'Invoke-NLSCollectSharePoint'
+        }
+        if (-not $SkipIntune) {
+            Write-Host "  [*] Intune: Endpoint Security (LAPS / ASR / Firewall / EDR / AV)..."
+            Invoke-NLSCollector 'Invoke-NLSCollectIntuneEndpointSecurity'
+            Write-Host "  [*] Intune: Device Compliance, WHfB, Update Rings, Enrollment..."
+            Invoke-NLSCollector 'Invoke-NLSCollectIntuneDeviceCompliance'
+            Write-Host "  [*] Intune: App Protection (MAM) and App Configuration..."
+            Invoke-NLSCollector 'Invoke-NLSCollectIntuneAppProtection'
+        }
+        if (-not $SkipPowerPlatform) {
+            Write-Host "  [*] Power Platform: Environments, tenant isolation, DLP..."
+            Invoke-NLSCollector 'Invoke-NLSCollectPowerPlatform'
+        }
+    }
+
+    if ($conn.EXO) {
+        Write-Host "  [*] EXO: Mailbox configuration..."
+        Invoke-NLSCollector 'Invoke-NLSCollectEXOMailboxConfig'
+        Write-Host "  [*] EXO: Inventory (forwarding, shared, audit, SMTP AUTH)..."
+        Invoke-NLSCollector 'Invoke-NLSCollectEXOInventory'
+        Write-Host "  [*] Defender: Safe Attachments, Safe Links, Anti-phishing..."
+        Invoke-NLSCollector 'Invoke-NLSCollectDefender'
+        if (-not $SkipDNS) {
+            Write-Host "  [*] DNS: SPF/DKIM/DMARC/MTA-STS for accepted domains..."
+            if ($DnsDomains) {
+                if (Get-Command Invoke-NLSCollectDNSEmailRecords -ErrorAction SilentlyContinue) {
+                    Invoke-NLSCollectDNSEmailRecords -Domains $DnsDomains | Out-Null
+                }
+            } else {
+                Invoke-NLSCollector 'Invoke-NLSCollectDNSEmailRecords'
+            }
+        }
+    }
+
+    if ($conn.Teams -and -not $SkipTeams) {
+        Write-Host "  [*] Teams: Meeting, external access, client policies..."
+        Invoke-NLSCollector 'Invoke-NLSCollectTeams'
+    }
+
+    if ($conn.IPPSSession -and -not $SkipPurview) {
+        Write-Host "  [*] Purview: Audit, DLP, retention, sensitivity labels..."
+        Invoke-NLSCollector 'Invoke-NLSCollectPurview'
+    }
+
+    # Copilot collector runs after Purview so it can reuse label/DLP/audit raw data
+    if ($conn.Graph) {
+        Write-Host "  [*] M365 Copilot: Licensing, label alignment, DLP coverage, Studio bots..."
+        Invoke-NLSCollector 'Invoke-NLSCollectM365Copilot'
+    }
+
+    # ── Run evaluators ───────────────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "[-] Running evaluators..." -ForegroundColor Cyan
+
+    function Invoke-NLSEvaluator { param([string]$fn)
+        if (Get-Command $fn -ErrorAction SilentlyContinue) {
+            try { & $fn }
+            catch {
+                # Strict-mode tightening (v4.6.x audit fix): a property-access
+                # crash on partial collector data now surfaces both as a warning
+                # for the operator console AND as a Register-NLSException so the
+                # incident is captured in the JSON output for follow-up.
+                $errMsg = $_.Exception.Message.Split([char]10)[0]
+                Write-Warning "Evaluator $($fn) — $errMsg"
+                if (Get-Command Register-NLSException -ErrorAction SilentlyContinue) {
+                    try { Register-NLSException -Source $fn -Message $errMsg } catch { }
+                }
+            }
+        }
+    }
+
+    # All evaluators discovered by name from the loaded module
+    $evaluators = @(Get-Command -Module NLS-Assessment -Name 'Test-NLSControl*' -ErrorAction SilentlyContinue |
+                    Select-Object -ExpandProperty Name)
+    foreach ($ev in $evaluators) {
+        Invoke-NLSEvaluator $ev
+    }
+
+    $findings = Get-NLSFindings
+    Write-Host "  [+] $($findings.Count) findings evaluated" -ForegroundColor Green
+
+    # ── Build report metadata ────────────────────────────────────────────────
+    $tenantTag = if ($conn.TenantDomain) { ($conn.TenantDomain -split '\.')[0] } else { 'tenant' }
+    # OWASP A01 — strip any non-[a-zA-Z0-9-] before using tenantTag in a file path
+    $tenantTag = $tenantTag -replace '[^a-zA-Z0-9-]', ''
+    if (-not $tenantTag) { $tenantTag = 'tenant' }
+    $baseName = "$tenantTag-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+
+    $reportMetadata = @{
+        TenantDomain   = $conn.TenantDomain
+        TenantId       = $conn.TenantId
+        Operator       = $UserPrincipalName
+        AssessmentDate = (Get-Date).ToString('MMMM dd, yyyy')
+        AssessmentTime = (Get-Date).ToString('o')
+        ToolVersion    = $NLSAssessmentVersion
+        Brand          = $NLSBrand
+    }
+}
+
+# ── Publish reports ──────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "[-] Generating reports..." -ForegroundColor Cyan
+
+$jsonPath = Join-Path $OutputPath "$baseName-results.json"
+# Capture the raw-data snapshot for drift detection on the NEXT run. The
+# delta publisher compares this snapshot against a future run's snapshot to
+# surface raw configuration changes (new CA policies, new admin assignments,
+# new OAuth apps, DMARC policy regression) — not just finding state changes.
+$rawDataSnapshot = if (Get-Command Get-NLSRawData -ErrorAction SilentlyContinue) {
+    Get-NLSRawData
+} else { @{} }
+# TOCTOU fix (v4.6.3 P2): Set-NLSSensitiveFileContent pre-creates the file
+# and applies the ACL BEFORE any tenant data is written. Previously the
+# file inherited the parent directory's permissions during Out-File and was
+# only restricted afterwards via Set-Acl — on a shared MSP workstation a
+# co-resident process polling the output dir could read tenant data in
+# that small window.
+$jsonPayload = @{
+    Metadata    = $reportMetadata
+    Findings    = $findings
+    RawData     = $rawDataSnapshot
+    Exceptions  = (Get-NLSExceptions)
+    Coverage    = (Get-NLSCoverage)
+    Connections = $conn
+} | ConvertTo-Json -Depth 10
+Set-NLSSensitiveFileContent -Path $jsonPath -Content $jsonPayload
+Write-Host "  [+] JSON: $jsonPath" -ForegroundColor Green
+Write-Host "      Baseline contains sensitive tenant inventory (CA policies, admin assignments, OAuth apps) — file ACL restricted to current user + admins. Path: $jsonPath" -ForegroundColor Yellow
+
+if (-not $JsonOnly) {
+    # ── Audit-finding fix (HIGH #2): every secondary report file gets the same
+    #    ACL hardening as the JSON baseline. They all contain the same tenant
+    #    inventory data (CA policies, admin UPNs, OAuth grants, DMARC records)
+    #    rendered into a different format. Inherited permissions on a shared
+    #    MSP workstation or synced OneDrive would otherwise make these world-
+    #    readable. Set-NLSSensitiveFileAcl is a no-op on non-Windows.
+    # Markdown summary
+    if (Get-Command Publish-NLSAssessmentSummary -ErrorAction SilentlyContinue) {
+        $mdPath = Join-Path $OutputPath "$baseName-assessment.md"
+        try {
+            Publish-NLSAssessmentSummary -Metadata $reportMetadata -Findings $findings -Connections $conn -OutputPath $mdPath
+            Write-Host "  [+] Markdown: $mdPath" -ForegroundColor Green
+            Set-NLSSensitiveFileAcl -Path $mdPath -ErrorAction SilentlyContinue
+        } catch { Write-Warning "Markdown publish failed: $($_.Exception.Message)" }
+    }
+
+    # HTML report
+    if (Get-Command Publish-NLSAssessmentHTML -ErrorAction SilentlyContinue) {
+        $htmlPath = Join-Path $OutputPath "$baseName-assessment.html"
+        try {
+            Publish-NLSAssessmentHTML -Metadata $reportMetadata -Findings $findings -Connections $conn -OutputPath $htmlPath
+            Write-Host "  [+] HTML: $htmlPath" -ForegroundColor Green
+            Set-NLSSensitiveFileAcl -Path $htmlPath -ErrorAction SilentlyContinue
+        } catch {
+        $stack = $_.ScriptStackTrace
+        Write-Warning "HTML failed: $($_.Exception.Message)"
+        Write-Warning "Stack: $stack"
+    }
+    }
+
+    # Remediation playbook + executive summary
+    # The publisher writes two deliverables: an engineer playbook (-OutputPath)
+    # and a client-facing executive summary (-ExecutivePath). Both -Connections
+    # and -ExecutivePath are mandatory on the function — omitting them in v4.6.1
+    # caused PowerShell to interactively prompt and then fail.
+    if (Get-Command Publish-NLSRemediationPlaybook -ErrorAction SilentlyContinue) {
+        $pbPath   = Join-Path $OutputPath "$baseName-playbook.md"
+        $execPath = Join-Path $OutputPath "$baseName-executive.md"
+        try {
+            Publish-NLSRemediationPlaybook `
+                -Metadata $reportMetadata `
+                -Findings $findings `
+                -Connections $conn `
+                -OutputPath $pbPath `
+                -ExecutivePath $execPath
+            Write-Host "  [+] Playbook: $pbPath" -ForegroundColor Green
+            Write-Host "  [+] Executive: $execPath" -ForegroundColor Green
+            Set-NLSSensitiveFileAcl -Path $pbPath   -ErrorAction SilentlyContinue
+            Set-NLSSensitiveFileAcl -Path $execPath -ErrorAction SilentlyContinue
+        } catch { Write-Warning "Playbook publish failed: $($_.Exception.Message)" }
+    }
+
+    # Remediation script
+    if (Get-Command Publish-NLSRemediationScript -ErrorAction SilentlyContinue) {
+        $rsPath = Join-Path $OutputPath "$baseName-remediation.ps1"
+        try {
+            Publish-NLSRemediationScript -Metadata $reportMetadata -Findings $findings -OutputPath $rsPath
+            Write-Host "  [+] Remediation: $rsPath" -ForegroundColor Green
+            Set-NLSSensitiveFileAcl -Path $rsPath -ErrorAction SilentlyContinue
+        } catch { Write-Warning "Remediation publish failed: $($_.Exception.Message)" }
+    }
+
+    # XLSX compliance matrix
+    if (Get-Command Publish-NLSComplianceMatrix -ErrorAction SilentlyContinue) {
+        $xlsxPath = Join-Path $OutputPath "$baseName-compliance-matrix.xlsx"
+        try {
+            Publish-NLSComplianceMatrix -Metadata $reportMetadata -Findings $findings -OutputPath $xlsxPath
+            Write-Host "  [+] XLSX matrix: $xlsxPath" -ForegroundColor Green
+            Set-NLSSensitiveFileAcl -Path $xlsxPath -ErrorAction SilentlyContinue
+        } catch { Write-Warning "XLSX publish failed: $($_.Exception.Message)" }
+    }
+
+    # Delta report (if baseline provided)
+    if ($BaselineResults -and (Test-Path -LiteralPath $BaselineResults) -and (Get-Command Publish-NLSDeltaReport -ErrorAction SilentlyContinue)) {
+        $deltaPath = Join-Path $OutputPath "$baseName-delta.md"
+        try {
+            Publish-NLSDeltaReport -CurrentFindings $findings -CurrentRawData $rawDataSnapshot -BaselineResultsPath $BaselineResults `
+                -Metadata $reportMetadata -OutputPath $deltaPath
+            Write-Host "  [+] Delta: $deltaPath" -ForegroundColor Green
+            Set-NLSSensitiveFileAcl -Path $deltaPath -ErrorAction SilentlyContinue
+        } catch { Write-Warning "Delta publish failed: $($_.Exception.Message)" }
+    }
+}
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+$s = @{
+    Satisfied = @($findings | Where-Object State -eq 'Satisfied').Count
+    Partial   = @($findings | Where-Object State -eq 'Partial').Count
+    Gap       = @($findings | Where-Object State -eq 'Gap').Count
+    NA        = @($findings | Where-Object State -eq 'NotApplicable').Count
+}
+
+# Footer version + control count read at runtime so a stale hardcoded value
+# never ships in the operator output. Falls back to the count of findings the
+# evaluators actually emitted this run rather than guessing at "total controls
+# defined in controls.json" which can drift from baseline coverage.
+$footerVer    = if ($NLSAssessmentVersion)   { $NLSAssessmentVersion }   else { $script:NLSAssessmentVersion }
+$footerCount  = $findings.Count
+
+Write-Host ""
+Write-Host "================================================================" -ForegroundColor Cyan
+Write-Host " Assessment Complete (v$footerVer / $footerCount controls)"      -ForegroundColor Cyan
+Write-Host "================================================================" -ForegroundColor Cyan
+Write-Host "  Satisfied      $($s.Satisfied)"                                  -ForegroundColor Green
+Write-Host "  Partial        $($s.Partial)"                                    -ForegroundColor Yellow
+Write-Host "  Gap            $($s.Gap)"                                        -ForegroundColor Red
+Write-Host "  Not Applicable $($s.NA)"                                         -ForegroundColor DarkGray
+Write-Host "  Total          $($findings.Count)"                               -ForegroundColor White
+Write-Host "  Output         $OutputPath"                                      -ForegroundColor White
+Write-Host ""
+
+# ── Exit-code spec (v4.6.3 P2) ────────────────────────────────────────────────
+# CLAUDE.md declares: 0 success, 1 auth failure, 2 no findings, 3 partial
+# collection, 4 fatal. Previously only exit 1 (module-load failure) was
+# wired. This block computes the right code based on counters set above.
+$collectorExceptions = @(Get-NLSExceptions)
+if ($findings.Count -eq 0) {
+    $script:NLSSuccessExitCode = 2
+} elseif ($collectorExceptions.Count -gt 0) {
+    # Partial collection: at least one collector raised, but some findings made it.
+    $script:NLSSuccessExitCode = 3
+} else {
+    $script:NLSSuccessExitCode = 0
+}
+
+}
+catch {
+    # Outer fatal-error catch (v4.6.3 P2).
+    # $script:NLSFatalExitCode may have been pre-set by an earlier explicit
+    # condition (auth failure = 1); otherwise fall through to 4 (fatal).
+    if (-not $script:NLSFatalExitCode) { $script:NLSFatalExitCode = 4 }
+    Write-Host ""
+    Write-Host "[!] Assessment failed: $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.ScriptStackTrace) {
+        Write-Host "    Stack: $($_.ScriptStackTrace)" -ForegroundColor DarkGray
+    }
+}
+finally {
+    # ── Disconnect on success or error ────────────────────────────────────────
+    if (-not $skipCollection) {
+        try { Disconnect-NLSServices } catch { }
+    }
+}
+
+# Resolve and emit the exit code (must be done OUTSIDE the try/catch/finally
+# so the exit happens after the disconnect runs).
+if ($script:NLSFatalExitCode) {
+    exit $script:NLSFatalExitCode
+}
+if ($null -ne $script:NLSSuccessExitCode) {
+    exit $script:NLSSuccessExitCode
+}
+exit 0

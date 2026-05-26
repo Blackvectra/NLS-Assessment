@@ -1,0 +1,318 @@
+#Requires -Version 7.0
+#
+# Test-NLSControlCopilot.ps1  (v4.6.1)
+# NextLayerSec
+# Author: NextLayerSec
+#
+# Purpose: Evaluators for Microsoft 365 Copilot and AI governance controls.
+# Reads raw data set by Invoke-NLSCollectM365Copilot (key 'M365Copilot').
+#
+# Controls evaluated:
+#   PPL-3.1  M365 Copilot Sensitivity Label Enforcement
+#   PPL-3.2  DLP Policy Active for Copilot Interactions
+#   PPL-3.3  Copilot Access Restricted to Licensed Users
+#   PPL-3.4  Copilot Studio Agent Publishing Governed
+#   PPL-3.5  Copilot Interaction Audit Logging Active
+#
+# Each function follows the standard NLS evaluator contract:
+#   1) Resolve control via Get-NLSControlById; bail if missing.
+#   2) Read raw data via Get-NLSRawData -Key 'M365Copilot'.
+#   3) If raw data missing or unsuccessful, register NotApplicable and return.
+#   4) Decide State; call Add-NLSFinding with full param block including FrameworkIds.
+#
+# NIST SP 800-53: AC-3 (access enforcement), AC-16 (security attributes),
+#                 AU-2 (event logging), SC-28 (info-at-rest protection)
+# MITRE ATT&CK:   T1530 (data from cloud storage), T1005 (data from local system)
+#
+
+# Helper: safe read of nested raw-data property
+function script:Get-NLSCopilotRaw {
+    $raw = $null
+    if (Get-Command Get-NLSRawData -ErrorAction SilentlyContinue) {
+        $raw = Get-NLSRawData -Key 'M365Copilot'
+    }
+    return $raw
+}
+
+# ── PPL-3.1  M365 Copilot Sensitivity Label Enforcement ──────────────────────
+function Test-NLSControlAICopilotSensitivityLabels {
+    [CmdletBinding()] param()
+    $cid = 'PPL-3.1'
+    $ctrl = Get-NLSControlById -ControlId $cid
+    if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+
+    $raw = Get-NLSCopilotRaw
+    if (-not $raw -or -not $raw.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'M365Copilot collector did not run successfully.'
+        return
+    }
+
+    $d = $raw.Data
+    $licensed = [int]($d.CopilotLicensedUserCount ?? 0)
+
+    if ($licensed -eq 0) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'No Microsoft 365 Copilot licenses detected — sensitivity label enforcement for Copilot is not applicable to this tenant.'
+        return
+    }
+
+    $labelsEnabled  = [bool]($d.SensitivityLabelsEnabled ?? $false)
+    $labelCount     = [int]($d.SensitivityLabelCount ?? 0)
+    $autoLabel      = [bool]($d.AutoLabelPoliciesEnabled ?? $false)
+
+    if ($labelsEnabled -and $labelCount -gt 0 -and $autoLabel) {
+        Add-NLSFinding -ControlId $cid -State 'Satisfied' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' `
+            -FrameworkIds $cit `
+            -CurrentValue "Labels: $labelCount; Auto-label policies: enabled" `
+            -RequiredValue 'Sensitivity labels published with auto-labeling for sensitive data' `
+            -Detail "Sensitivity labels are configured ($labelCount label(s)) and auto-labeling policies are enabled — Microsoft 365 Copilot will respect these classification boundaries when accessing and summarizing content."
+    } elseif ($labelsEnabled -and $labelCount -gt 0) {
+        Add-NLSFinding -ControlId $cid -State 'Partial' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity 'Medium' `
+            -FrameworkIds $cit `
+            -CurrentValue "Labels: $labelCount; Auto-label policies: disabled" `
+            -RequiredValue 'Auto-labeling policies active so unlabeled-but-sensitive content is still suppressed' `
+            -Detail "Sensitivity labels exist ($labelCount) but no auto-labeling policy is active. Users must manually classify content; Copilot can surface sensitive files that were never labeled." `
+            -Remediation $ctrl.Remediation
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'Gap' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity $ctrl.Severity `
+            -FrameworkIds $cit `
+            -CurrentValue 'No sensitivity labels configured' `
+            -RequiredValue 'Sensitivity labels with Files & emails scope + auto-labeling' `
+            -Detail "Copilot is licensed to $licensed user(s) but no sensitivity labels are configured. Copilot can surface any document the user can access — HR, financial, contractual — with no label-based suppression. Over-sharing risk is materially amplified." `
+            -Remediation $ctrl.Remediation
+    }
+}
+
+# ── PPL-3.2  Copilot DLP Policy Active ────────────────────────────────────────
+function Test-NLSControlAICopilotDLP {
+    [CmdletBinding()] param()
+    $cid = 'PPL-3.2'
+    $ctrl = Get-NLSControlById -ControlId $cid
+    if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+
+    $raw = Get-NLSCopilotRaw
+    if (-not $raw -or -not $raw.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'M365Copilot collector did not run successfully.'
+        return
+    }
+
+    $d = $raw.Data
+    $licensed = [int]($d.CopilotLicensedUserCount ?? 0)
+
+    if ($licensed -eq 0) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'No Copilot licenses detected — DLP coverage of Copilot interactions is not applicable.'
+        return
+    }
+
+    $dlp = @($d.CopilotDLPPolicies ?? @())
+    $locs = @($d.CopilotDLPLocations ?? @())
+    $copilotInLocs = ($locs -contains 'Copilot') -or
+                     ($locs -contains 'M365Copilot') -or
+                     ($locs -contains 'CopilotExperiences')
+
+    if ($dlp.Count -gt 0 -and $copilotInLocs) {
+        Add-NLSFinding -ControlId $cid -State 'Satisfied' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' `
+            -FrameworkIds $cit `
+            -CurrentValue "$($dlp.Count) DLP policy(ies) cover Copilot workload" `
+            -RequiredValue 'At least one enabled DLP policy with Copilot location included' `
+            -Detail "DLP coverage detected for Microsoft 365 Copilot interactions ($($dlp.Count) policy/policies). Sensitive-information types in prompts and responses are subject to policy controls."
+    } elseif ($dlp.Count -gt 0) {
+        Add-NLSFinding -ControlId $cid -State 'Partial' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity 'Medium' `
+            -FrameworkIds $cit `
+            -CurrentValue "$($dlp.Count) DLP policy(ies) reference Copilot but Copilot location not confirmed" `
+            -RequiredValue 'DLP policy with Locations explicitly including Microsoft 365 Copilot' `
+            -Detail "DLP policies referencing Copilot were found ($($dlp.Count)) but the Copilot location is not in the confirmed workload set. Verify in Purview > DLP > Policy > Locations that Microsoft 365 Copilot is included." `
+            -Remediation $ctrl.Remediation
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'Gap' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity $ctrl.Severity `
+            -FrameworkIds $cit `
+            -CurrentValue 'No DLP policies cover Copilot' `
+            -RequiredValue 'DLP policy with Copilot location enabled' `
+            -Detail "Copilot is licensed to $licensed user(s) but no DLP policy covers Copilot interactions. Users can prompt Copilot to summarize, translate, or reformat sensitive data — bypassing every other data control." `
+            -Remediation $ctrl.Remediation
+    }
+}
+
+# ── PPL-3.3  Copilot Enabled Only for Licensed Users ──────────────────────────
+function Test-NLSControlAICopilotLicensedOnly {
+    [CmdletBinding()] param()
+    $cid = 'PPL-3.3'
+    $ctrl = Get-NLSControlById -ControlId $cid
+    if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+
+    $raw = Get-NLSCopilotRaw
+    if (-not $raw -or -not $raw.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'M365Copilot collector did not run successfully.'
+        return
+    }
+
+    $d = $raw.Data
+    $licensed = [int]($d.CopilotLicensedUserCount ?? 0)
+    $total    = [int]($d.TotalUserCount ?? 0)
+    $skus     = @($d.LicensedSkus ?? @())
+
+    if ($skus.Count -eq 0 -and $licensed -eq 0) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'No Copilot SKUs visible — licensing posture cannot be evaluated.'
+        return
+    }
+
+    # Judgment call: M365 Copilot is licensed per-user, not tenant-wide, so the
+    # platform guarantees licensed-only access at the entitlement layer. What we
+    # CAN check is whether the assignment looks intentional (subset of users) vs.
+    # blanket (every user has a Copilot SKU — which usually indicates lack of
+    # governance review).
+    if ($total -gt 0) {
+        $ratio = if ($total -gt 0) { [double]$licensed / [double]$total } else { 0.0 }
+
+        if ($licensed -eq 0) {
+            Add-NLSFinding -ControlId $cid -State 'Satisfied' `
+                -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' `
+                -FrameworkIds $cit `
+                -CurrentValue "0 of $total users licensed" `
+                -RequiredValue 'Copilot license assigned only to approved users' `
+                -Detail 'No users currently have a Copilot license. Platform-enforced licensing means no user can invoke Copilot.'
+        } elseif ($ratio -ge 0.95) {
+            Add-NLSFinding -ControlId $cid -State 'Partial' `
+                -Category $ctrl.Category -Title $ctrl.Title -Severity 'Medium' `
+                -FrameworkIds $cit `
+                -CurrentValue "$licensed of $total users licensed ($([math]::Round($ratio * 100,1))%)" `
+                -RequiredValue 'Group-based or PIM-time-bound assignment with documented business need' `
+                -Detail "Copilot is licensed for $licensed of $total users — effectively the entire tenant. This pattern usually indicates blanket assignment without per-user governance review. Confirm via Entra ID > Groups > license assignment whether Copilot is gated by an approval group." `
+                -Remediation $ctrl.Remediation
+        } else {
+            Add-NLSFinding -ControlId $cid -State 'Satisfied' `
+                -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' `
+                -FrameworkIds $cit `
+                -CurrentValue "$licensed of $total users licensed ($([math]::Round($ratio * 100,1))%)" `
+                -RequiredValue 'Copilot licensing scoped to a subset of users' `
+                -Detail "Copilot is scoped to $licensed of $total users — licensing is bounded rather than blanket-assigned. Verify the assignment group reflects documented business need."
+        }
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'User count could not be determined — licensing posture cannot be evaluated.'
+    }
+}
+
+# ── PPL-3.4  Copilot Studio Agent Publishing Governed ─────────────────────────
+function Test-NLSControlAICopilotStudio {
+    [CmdletBinding()] param()
+    $cid = 'PPL-3.4'
+    $ctrl = Get-NLSControlById -ControlId $cid
+    if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+
+    $raw = Get-NLSCopilotRaw
+    if (-not $raw -or -not $raw.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'M365Copilot collector did not run successfully.'
+        return
+    }
+
+    $d = $raw.Data
+    $bots = @($d.CopilotStudioBots ?? @())
+    $extPub = [bool]($d.ExternalPublishingEnabled ?? $false)
+
+    if ($bots.Count -eq 0) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'No Copilot Studio bots detected via Graph application enumeration. Power Platform admin APIs may not be accessible to the assessment principal; verify manually in Power Platform Admin Center > Copilot Studio if bots are present.'
+        return
+    }
+
+    if ($extPub) {
+        $externalBots = @($bots | Where-Object {
+            $_.PublisherDomain -and $_.PublisherDomain -notmatch 'onmicrosoft\.com$'
+        })
+        Add-NLSFinding -ControlId $cid -State 'Gap' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity $ctrl.Severity `
+            -FrameworkIds $cit `
+            -CurrentValue "$($externalBots.Count) of $($bots.Count) bot(s) appear to allow external publishing" `
+            -RequiredValue 'All Copilot Studio bots internal-only; external publishing disabled by tenant policy' `
+            -Detail "One or more Copilot Studio agents have an external publisher domain. External publishing means anyone on the internet can interact with the bot — for an MSP client this almost always indicates unintended exposure of a SharePoint-connected, Graph-connected, or third-party-connected bot." `
+            -Remediation $ctrl.Remediation
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'Satisfied' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' `
+            -FrameworkIds $cit `
+            -CurrentValue "$($bots.Count) Copilot Studio bot(s) detected, all internal-only" `
+            -RequiredValue 'Internal-only Copilot Studio publishing' `
+            -Detail "$($bots.Count) Copilot Studio bot(s) detected. No external publisher domains observed in the Graph applications inventory."
+    }
+}
+
+# ── PPL-3.5  Copilot Interaction Audit Logging Active ─────────────────────────
+function Test-NLSControlAICopilotInteractionData {
+    [CmdletBinding()] param()
+    $cid = 'PPL-3.5'
+    $ctrl = Get-NLSControlById -ControlId $cid
+    if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+
+    $raw = Get-NLSCopilotRaw
+    if (-not $raw -or -not $raw.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'M365Copilot collector did not run successfully.'
+        return
+    }
+
+    $d = $raw.Data
+    $licensed = [int]($d.CopilotLicensedUserCount ?? 0)
+
+    if ($licensed -eq 0) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+            -Category $ctrl.Category -Title $ctrl.Title `
+            -Detail 'No Copilot licenses detected — interaction audit applicability is not yet relevant.'
+        return
+    }
+
+    $audit = [bool]($d.AuditCopilotEnabled ?? $false)
+    $retention = $d.CopilotInteractionRetention
+
+    if (-not $audit) {
+        Add-NLSFinding -ControlId $cid -State 'Gap' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity $ctrl.Severity `
+            -FrameworkIds $cit `
+            -CurrentValue 'Unified Audit Log ingestion disabled' `
+            -RequiredValue 'Unified Audit Log enabled; Copilot prompts and responses recorded' `
+            -Detail 'Copilot prompts and responses are not being captured. An insider using Copilot to extract sensitive data leaves no audit trail — compliance investigations involving Copilot usage cannot be reconstructed.' `
+            -Remediation $ctrl.Remediation
+    } elseif ($null -eq $retention -or [string]$retention -eq '') {
+        Add-NLSFinding -ControlId $cid -State 'Partial' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity 'Medium' `
+            -FrameworkIds $cit `
+            -CurrentValue 'Audit enabled; no explicit Copilot retention policy' `
+            -RequiredValue 'Audit enabled plus a retention policy covering Copilot interactions' `
+            -Detail 'Unified audit logging is active so Copilot interactions are recorded — but no Purview retention policy explicitly covers Copilot. Platform-default retention (~180 days for E3, longer for E5 Audit Premium) may not meet legal-hold or regulated-industry requirements.' `
+            -Remediation $ctrl.Remediation
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'Satisfied' `
+            -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' `
+            -FrameworkIds $cit `
+            -CurrentValue 'Audit enabled; explicit Copilot retention policy in place' `
+            -RequiredValue 'Audit enabled + retention policy covering Copilot' `
+            -Detail 'Unified audit logging is active and a retention policy covers Copilot interactions. Prompts/responses are searchable in Purview Content Explorer and Audit Search for compliance and eDiscovery.'
+    }
+}
