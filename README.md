@@ -1,582 +1,221 @@
-# NLS-Assessment v2
+# NLS-Assessment
 
-> NextLayerSec M365 Security Assessment Framework — Version 2
-> Read-only assessment instrument for Exchange Online and Entra ID.
-> Maps findings to NIST SP 800-53 Rev 5, CIS Controls v8.1, HIPAA current rule,
-> HIPAA NPRM proposed rule, CISA Zero Trust Maturity Model, and ISO/IEC 27001:2022.
-> Produces structured markdown artifacts with granular finding detail,
-> affected object lists, current state vs recommended comparisons,
-> per-framework recommendation blocks, delta reporting, remediation scripts,
-> and cross-tenant portfolio summaries.
+**Read-only M365 security assessment framework for managed service providers.**
 
-[![License](https://img.shields.io/badge/License-CC%20BY--ND%204.0-blue?style=flat-square)](https://creativecommons.org/licenses/by-nd/4.0/)
-[![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?style=flat-square)](https://github.com/PowerShell/PowerShell)
-[![Read Only](https://img.shields.io/badge/Mode-Read--Only-00c853?style=flat-square)]()
-[![Frameworks](https://img.shields.io/badge/Frameworks-NIST%20%7C%20CIS%20%7C%20HIPAA%20%7C%20ZeroTrust%20%7C%20ISO%2027001-orange?style=flat-square)]()
-[![Version](https://img.shields.io/badge/Version-2.0.0-white?style=flat-square)]()
+Built by NextLayerSec — nextlayersec.io  
+GitHub: [Blackvectra/NLS-Assessment](https://github.com/Blackvectra/NLS-Assessment)
 
 ---
 
-## What's New in v2
+## What It Does
 
-| Feature | Description |
-|---|---|
-| Assessment profiles | `-P Quick/Standard/HIPAA/MSP/ZeroTrust/Full` — predefined flag bundles |
-| Remediation script | Auto-generated per-tenant PowerShell remediation script every run |
-| Delta reporting | Compares current run against previous — surfaces improved, regressed, new |
-| Portfolio summary | `Invoke-NLSSummary.ps1` — cross-tenant view ranked by risk score |
-| BLUF report structure | Executive Summary → Action Plan → Posture & Telemetry → Appendix |
-| Inline PS remediation | PowerShell commands render as copy-paste code blocks in Action Plan |
-| Live DNS lookup | SPF, DMARC, DKIM, DNSSEC, MTA-STS per domain via 8.8.8.8 (`-DNSRecords`) |
-| SHA-256 module integrity | Hash manifest prevents in-place file tampering (`-GenerateManifest`) |
-| Token cache clear | `-ClearToken` fixes stale Graph token scope issues |
-| Full debug mode | `-DebugAll` surfaces complete data flow, scoring traces, and rendering pipeline |
-| onmicrosoft.com exclusion | Microsoft-managed domains excluded from DMARC and MTA-STS scoring |
-| ISO 27001:2022 framework | Annex A citations on every finding — on by default in Standard, HIPAA, MSP, ZeroTrust, Full profiles (`-ISO`) |
-| Correlation engine | Cross-control attack path analysis — maps exploitable control combinations to MITRE ATT&CK TTPs |
-| Framework citations | Every finding includes NIST, CIS, HIPAA, and ISO 27001:2022 citations from dictionary |
-| Command injection hardening | Identity variables sanitized in generated remediation scripts |
-| Redaction hardening | IPv4, IPv6, UPNs, GUIDs, tenant URLs redacted when `-RedactSensitiveData` |
-| 33 scored controls | Full coverage across Exchange, identity, DNS, CA, and mail flow |
-| CA policy inventory | Full policy table with state, MFA grant, legacy auth block, device compliance |
-| User MFA gap analysis | Per-user MFA registration status with admin flagging (`-MFAReport`) |
-| Secure Score integration | Current score, top improvement opportunities, prioritized roadmap to target (`-SecureScore`) |
-| Admin role inventory | Global Admin count, over-privilege detection (`-AdminRoles`) |
-| Stale account detection | Accounts inactive 90+ days with last sign-in (`-StaleAccounts`) |
-| Guest account inventory | External guest accounts with stale detection (`-GuestInventory`) |
-| Named location check | Zero Trust gap when no named locations defined (`-NamedLocations`) |
-| Service principal inventory | High-privilege app detection, Microsoft first-party excluded (`-ServicePrincipals`) |
-| Shared mailbox hardening | Interactive sign-in and legacy protocol check (`-SharedMailboxes`) |
-| Break-glass account check | Detects and validates emergency access account CA exclusion (`-BreakGlass`) |
+Connects to a Microsoft 365 tenant via delegated auth (or GDAP for MSP batch runs), collects raw configuration data across all M365 services, evaluates 143 security controls, and produces client-ready HTML and Markdown reports with framework citations.
+
+**Zero writes to tenant. Read-only by design.**
 
 ---
 
-## Overview
+## First-Time Setup
 
-`Invoke-NLSAssessment` is a precision read-only assessment instrument built for MSP and consulting operations. It connects to Exchange Online and Microsoft Graph, collects security policy configuration and sign-in telemetry, scores 33 controls against the NextLayerSec baseline, and produces structured markdown artifacts mapped to authoritative compliance frameworks.
-
-**No tenant configuration changes are made at any point.**
-
-Every run produces three artifacts — the assessment report, a remediation script, and an exceptions log. If a previous report exists for the same tenant, the report automatically includes a delta section showing what changed since the last run.
-
----
-
-## Report Structure
-
-Reports follow a BLUF (Bottom Line Up Front) structure designed for both executive and technical readers.
-
-**Section 1 — Executive Summary:** Secure Score, gap/pass counts, and a one-line bottom line. Readers know the tenant's posture in 10 seconds.
-
-**Section 2 — Action Plan:** Gaps and partials only. Correlation engine findings render first as coordinated attack path analysis mapped to MITRE ATT&CK. Individual findings follow with current state, risk, framework citations, and remediation. PowerShell-executable remediations render as copy-paste code blocks. Portal-only actions are clearly labeled.
-
-**Section 3 — Posture & Telemetry:** Supporting evidence. Identity and privilege summary, admin role table, named locations, CA policy inventory, DNS email record verification (live 8.8.8.8 lookup).
-
-**Section 4 — Appendix:** Satisfied controls grouped by category with framework citations, collection coverage table, and full assessment metadata.
-
----
-
-## What It Checks
-
-### Exchange Online (Standard)
-- Legacy authentication policy configuration and org default assignment
-- SMTP client authentication status
-- External auto-forwarding controls
-- Mailbox protocol hardening (POP, IMAP) — with affected mailbox lists
-- Mailbox auditing — with list of mailboxes with auditing disabled
-- Unified audit log status
-- Outbound spam notification
-- Defender for Office 365 — Safe Attachments, Safe Links, Anti-Phishing, Mailbox Intelligence, ZAP, ATP for SPO/Teams/ODB
-- DKIM signing configuration per domain
-- DNSSEC status per domain — EXO check with live DNS fallback via 8.8.8.8
-
-### Exchange Online (Optional Flags)
-- DMARC policy state per domain via DNS — onmicrosoft.com excluded from scoring (`-DMARC`)
-- Live DNS record lookup — SPF, DMARC, DKIM, DNSSEC, MTA-STS published values via 8.8.8.8 (`-DNSRecords`)
-- Shared mailbox hardening — interactive sign-in and legacy protocols (`-SharedMailboxes`)
-- MTA-STS, inbound spam policy hardening, malware filter policy (`-MailFlowHardening`)
-
-### Identity (Microsoft Graph — Standard)
-- Full CA policy inventory — state, MFA grant, legacy auth block, device compliance
-- Missing recommended policy detection
-- MFA enforcement via BuiltInControls and AuthenticationStrength
-- Legacy authentication blocking
-
-### Graph Extended Data (Optional Flags)
-- Per-user MFA registration status with admin flagging (`-MFAReport`)
-- Microsoft Secure Score with prioritized roadmap to target score (`-SecureScore`)
-- Admin role inventory — Global Admin count, over-privilege detection (`-AdminRoles`)
-- Stale accounts inactive 90+ days (`-StaleAccounts`)
-- External guest account inventory with stale detection (`-GuestInventory`)
-- Named location definition check for Zero Trust segmentation (`-NamedLocations`)
-- High-privilege service principal inventory — Microsoft first-party excluded (`-ServicePrincipals`)
-- Security Defaults, authentication methods, consent framework, PIM, break-glass (`-IdentityHardening`)
-- External collaboration — guest invitation policy (`-IdentityHardening`)
-
-### Scored Controls (33 total)
-
-| Category | Controls |
-|---|---|
-| Transport | SmtpClientAuth |
-| Mail Flow | ExternalForwarding, MTASTS |
-| Protocols | PopEnabled, ImapEnabled |
-| Auditing | UnifiedAuditLog, MailboxAudit |
-| Threat Protection | OutboundSpam, InboundSpamPolicy, MalwareFilterPolicy |
-| Defender for Office 365 | SafeAttachments, SafeLinks, AntiPhish, MailboxIntelligence, ZAPSpam, ZAPPhish, ATPSPOTeams |
-| Email Authentication | DKIM, DMARC |
-| DNS Security | DNSSEC |
-| Conditional Access | AdminMFA, CAPolicy, LegacyAuth, SecurityDefaults, NamedLocations |
-| Identity | AuthMethodsPolicy, ConsentFramework, BreakGlass, UserMFAGap, ExternalCollaboration, GlobalAdminCount, StaleAccounts |
-| Shared Mailbox | SharedMailboxSignIn |
-
-### Correlation Engine
-
-The correlation engine runs after individual control scoring and identifies multi-control attack paths — combinations of control gaps that create exploitable chains an attacker could leverage in sequence. Each correlation finding maps to specific MITRE ATT&CK techniques and renders in Section 2 before individual gap findings.
-
-| Rule | Conditions | MITRE TTPs |
-|---|---|---|
-| CORR-001: BEC Attack Path | MFA gap + external forwarding enabled | T1078, T1114, T1566 |
-| CORR-002: Privileged Access Takeover | GA count > 2 + permanent GAs (no PIM) | T1078.004, T1098, T1098.003 |
-| CORR-003: OAuth Persistence | User consent enabled + MFA gap | T1528, T1550.001 |
-| CORR-004: Email Domain Spoofing | DMARC not at p=reject + DKIM gaps | T1566.002, T1598 |
-| CORR-005: Stale Identity Attack Surface | Stale accounts + stale guests + MFA gap | T1078, T1133 |
-
----
-
-## Framework Mapping
-
-| Framework | Version | Switch |
-|---|---|---|
-| NIST SP 800-53 | Rev 5 Release 5.2.0 | `-NIST` |
-| CIS Controls | v8.1 June 2024 | `-CIS` |
-| HIPAA Security Rule | 45 CFR 164.312 current enforceable rule | `-HIPAA` |
-| HIPAA Security Rule NPRM | December 27 2024 proposed rule | `-HIPAAProposed` |
-| CISA Zero Trust Maturity Model | 2023 | `-ZeroTrust` |
-| ISO/IEC 27001 | 2022 (Annex A) | `-ISO` |
-
-**Default behavior:** When no framework flag is passed, `-NIST` is applied automatically. ISO 27001:2022 is on by default in Standard, HIPAA, MSP, ZeroTrust, and Full profiles.
-
-### HIPAA NPRM Note
-
-The December 2024 NPRM proposes eliminating the required/addressable distinction across all implementation specifications. Expected final rule: May 2026 with a 240-day compliance window. Running `-HIPAA -HIPAAProposed` together produces a dual-state gap analysis. Recommended for all healthcare client engagements.
-
-### Finding States
-
-| State | Severity | Meaning |
-|---|---|---|
-| Gap | High | Control is missing or disabled |
-| Partial | Medium | Control exists but not fully enforced |
-| Satisfied | Pass | Control is enabled and enforced |
-
----
-
-## Profiles
-
-| Profile | Syntax | Frameworks | Features Included |
-|---|---|---|---|
-| Quick | `-P Quick` | NIST | Exchange only, no Graph — fastest triage |
-| Standard | `-P Standard` | NIST, CIS, ISO 27001:2022 | Full Graph — general purpose assessment |
-| HIPAA | `-P HIPAA` | HIPAA, HIPAAProposed, ISO 27001:2022 | MFAReport, AdminRoles, DMARC, SharedMailboxes |
-| MSP | `-P MSP` | NIST, CIS, ISO 27001:2022 | AdminRoles, StaleAccounts, GuestInventory, DMARC, SharedMailboxes, DNSRecords, MailFlowHardening |
-| ZeroTrust | `-P ZeroTrust` | NIST, ZeroTrust, ISO 27001:2022 | NamedLocations, AdminRoles, MFAReport, ServicePrincipals, StaleAccounts, IdentityHardening, BreakGlass |
-| Full | `-P Full` | All frameworks | All features |
-
-Profiles are additive — extra flags alongside `-P` expand the profile.
-
----
-
-## Usage
-
-### Get Help
+On a fresh machine, run this once:
 
 ```powershell
-# Usage summary
-Get-Help .\Invoke-NLSAssessment.ps1
-
-# Full detail with all parameters
-Get-Help .\Invoke-NLSAssessment.ps1 -Full
+# After extracting the zip
+cd C:\path\to\NLS-Assessment-v4.5.5
+.\Install-NLSPrerequisites.ps1
 ```
 
-### Profile Examples
+This installs/pins required PowerShell modules (with EOM at the known-good 3.2.0 version), sets execution policy, unblocks files, and installs Python+openpyxl if you want XLSX compliance matrices. Skip Python with `-SkipPython`.
+
+## Quick Start
+
+> **First time on Windows?** After extracting, unblock the files and set execution policy:
+> ```powershell
+> Get-ChildItem -Path . -Recurse | Unblock-File
+> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+> ```
+
+
+
+### Prerequisites
 
 ```powershell
-# Quick triage -- Exchange only, no Graph
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick
-
-# MSP tenant assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
-
-# Healthcare client -- dual-state HIPAA, redacted
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P HIPAA -RedactSensitiveData
-
-# Full assessment -- everything, redacted
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -RedactSensitiveData
-
-# Profile expanded with extra flag
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -SecureScore
+# Install required modules (exact versions — supply chain pinned)
+Install-PSResource -Name Microsoft.Graph.Authentication -Version 2.20.0 -TrustRepository
+Install-PSResource -Name ExchangeOnlineManagement       -Version 3.4.0  -TrustRepository
+Install-PSResource -Name MicrosoftTeams                -Version 6.4.0  -TrustRepository
+Install-PSResource -Name Microsoft.Online.SharePoint.PowerShell -Version 16.0.24720.12000 -TrustRepository
+Install-PSResource -Name Pester                        -Version 5.6.1  -TrustRepository
 ```
 
-### Debug Flags
+### Single Tenant Run
 
 ```powershell
-# Full debug -- all sections, data flow, scoring traces, rendering pipeline
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -DebugAll
+# Clone repo
+git clone https://github.com/Blackvectra/NLS-Assessment
+cd NLS-Assessment-Tool
 
-# Scoring traces only
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -DebugScoring
+# Run assessment
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@client.com
 
-# DNS collection and rendering traces only
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -DebugDNS
-
-# Fix stale Graph token (AccessDenied on CA or Named Locations)
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -ClearToken
+# Output lands in .\output\<timestamp>\
 ```
 
-### Delta Comparison
-
-Delta runs automatically when a previous report exists for the same tenant. Manual override:
+### MSP Batch Run (GDAP)
 
 ```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP -Compare ".\output\tenant-20260301.md"
+# 1. Add your clients to Config\clients.json (TenantId + DelegatedOrg required)
+# 2. One browser login covers all tenants via GDAP relationships
+.\Invoke-NLSBatchAssessment.ps1
+
+# Run a single client
+.\Invoke-NLSBatchAssessment.ps1 -OnlyClient example.com
+
+# Preview what would run
+.\Invoke-NLSBatchAssessment.ps1 -WhatIf
 ```
-
-### Portfolio Summary
-
-```powershell
-.\Invoke-NLSSummary.ps1
-```
-
----
-
-## Security
-
-### Module Integrity
-
-Every run verifies all NLS modules against a SHA-256 hash manifest. If any module has been modified since the manifest was generated, the tool aborts with `MODULE INTEGRITY VIOLATION DETECTED`.
-
-This covers two attack vectors: path injection (malicious `.psm1` from a different directory) and in-place tampering (legitimate module file modified on disk).
-
-> **Note:** The integrity check runs after module import. It detects tampering but cannot prevent already-loaded malicious code from executing. On shared systems, pre-create the output directory with correct permissions before running.
-
-### First Run — Generate Hash Manifest
-
-After downloading or updating the tool, generate the baseline hash manifest before running any assessments:
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
-```
-
-### Update Procedure
-
-Any time you replace a module file you must regenerate the manifest:
-
-```powershell
-# Step 1 -- replace module files
-# Step 2 -- regenerate manifest
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
-# Step 3 -- run assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full
-```
-
-### Output Security
-
-- Output directory permissions locked to current user on creation
-- `-RedactSensitiveData` scrubs UPNs, GUIDs, IPv4, IPv6, and tenant URLs from all output including exceptions log
-- Exception messages sanitized — Bearer tokens, JWTs, and credentials stripped before storage
-- Remediation scripts sanitize identity variables to prevent command injection
-
----
-
-## Output
-
-Every run produces three files in `output\` named using the tenant domain and date.
-
-| File | Example | Contents |
-|---|---|---|
-| `<tenant>-<date>.md` | `contoso-20260424.md` | Full assessment report |
-| `<tenant>-<date>-remediation.ps1` | `contoso-20260424-remediation.ps1` | Ready-to-review remediation script |
-| `<tenant>-<date>-exceptions.md` | `contoso-20260424-exceptions.md` | Non-fatal collection errors |
-
-### Remediation Script
-
-```powershell
-# Preview changes without applying
-.\contoso-20260424-remediation.ps1 -UserPrincipalName admin@contoso.com -WhatIf
-
-# Apply with confirmation prompts
-.\contoso-20260424-remediation.ps1 -UserPrincipalName admin@contoso.com
-
-# Apply without prompts
-.\contoso-20260424-remediation.ps1 -UserPrincipalName admin@contoso.com -Force
-```
-
-Always review the remediation script before running. Outbound spam notification requires updating the recipient address before executing — the script throws a terminating error if the placeholder is not updated.
 
 ---
 
 ## Architecture
 
 ```
-NLS-Assessment/
-|
-|-- Invoke-NLSAssessment.ps1           # Orchestrator -- run this
-|-- Invoke-NLSSummary.ps1              # Portfolio summary across all tenants
-|
-|-- Modules/
-|   |-- NLS.Core.psm1                  # Output safety, redaction, integrity, security controls
-|   |-- NLS.Exchange.psm1              # Exchange Online + DMARC + DNS + mail flow hardening
-|   |-- NLS.ConditionalAccess.psm1     # Graph CA, telemetry, MFA, Secure Score, identity hardening
-|   |-- NLS.FrameworkDictionary.psm1   # 33 state-aware compliance citations (data only)
-|   |-- NLS.Scoring.psm1               # Scoring engine with module-level dedup
-|   |-- NLS.Reporting.psm1             # BLUF markdown report generator
-|   |-- NLS.Remediation.psm1           # Remediation script generator
-|   |-- NLS.Delta.psm1                 # Delta comparison and reporting
-|   |-- NLS.Correlation.psm1           # Cross-control attack path analysis engine
-|   `-- modules.sha256                 # SHA-256 hash manifest (generated, not committed)
-|
-|-- output/                            # Assessment artifacts (gitignored)
-|
-|-- README.md
-`-- .gitignore
-```
+Invoke-NLSAssessment.ps1          ← Entry point (validated params, try/finally)
+Invoke-NLSBatchAssessment.ps1     ← GDAP batch runner (one auth, all tenants)
+NLS-Assessment.psm1               ← Module loader (recursive dot-source, path traversal check)
+NLS-Assessment.psd1               ← Module manifest (153 exports, dependency declarations)
 
-### Security Controls in NLS.Core
+Lib/                              ← Shared infrastructure
+  Add-NLSFinding.ps1              State management (findings, exceptions, coverage, raw data)
+  Connect-NLSServices.ps1         Auth (browser/device code, process-scoped MSAL)
+  ConvertTo-NLSHtmlSafe.ps1       XSS prevention (all tenant data escapes through here)
+  Get-NLSControlDefinitions.ps1   controls.json loader + content validation
 
-| Function | Purpose |
-|---|---|
-| `Test-NLSInputUPN` | Validates UPN format before passing to connection cmdlets |
-| `Test-NLSModuleIntegrity` | Path check + SHA-256 hash check against manifest |
-| `New-NLSModuleHashManifest` | Generates baseline hash manifest |
-| `Protect-NLSOutputPath` | Locks output directory permissions to current user |
-| `Invoke-NLSRedaction` | Central redaction — UPNs, GUIDs, IPv4, IPv6, tenant URLs |
-| `Register-NLSException` | Sanitizes exception messages — strips tokens and credentials before storing |
+Collectors/                       READ-ONLY — raw data collection, no scoring
+  AAD/    (6 files)               Auth policies, CA, users+MFA, roles, PIM, identity governance
+  EXO/    (3 files)               Mailbox config + connection filter, Defender policies
+  DNS/    (1 file)                SPF, DKIM, DMARC, MTA-STS, TLS-RPT, DNSSEC
+  SharePoint/ Teams/ Purview/
+  Intune/ PowerPlatform/          (5 files)
 
-### Scoring Architecture
+Evaluators/                       SCORING ONLY — reads raw data, writes findings
+  Test-NLSControl-AAD.ps1         32 controls
+  Test-NLSControlEXO.ps1          21 controls
+  Test-NLSControlDNS.ps1          6 controls
+  Test-NLSControlDefender.ps1     16 controls
+  Test-NLSControlSharePoint.ps1   17 controls
+  Test-NLSControlTeams.ps1        18 controls
+  Test-NLSControlPurview.ps1      14 controls
+  Test-NLSControlIntune.ps1       13 controls
+  Test-NLSControlPowerPlatform.ps1 6 controls
 
-`Add-NLSFinding` is a module-level function in `NLS.Scoring.psm1`. It maintains a `HashSet[string]` of scored ControlIds to prevent duplicates regardless of how many code paths evaluate the same control. Framework citations are looked up at call time from `NLS.FrameworkDictionary.psm1` and attached to each finding. The dictionary is loaded after state reset to prevent initialization order issues.
+Publishers/
+  Publish-NLSAssessmentHTML.ps1   Interactive HTML report with exec summary + findings
+  Publish-NLSAssessmentSummary.ps1 Markdown report for OneNote / GitHub
 
-### Correlation Engine
+Config/
+  controls.json                   143 control definitions + framework citations
+  frameworks.json                 CIS, SCuBA, NIST, CMMC, MITRE metadata
+  clients.json                    MSP client registry (TenantId + GDAP config)
 
-`NLS.Correlation.psm1` runs after all individual control scores are finalized. It reads the scored findings from the extended data object and evaluates five MITRE ATT&CK-mapped rules against observed control states. Matching rules emit `[ordered]@{}` correlation objects that are injected into the report as an Attack Path Analysis block before standard gap findings. Correlation findings use `CORR-*` identifiers and are excluded from standard gap/partial severity counts.
+Testing/
+  NLS.Security.Tests.ps1          77 Pester tests (OWASP/ASVS static + runtime)
 
-### Data and Logic Separation
-
-`NLS.FrameworkDictionary.psm1` contains only compliance mapping data — no execution logic. When a framework releases a new version, only this file changes. All 33 ControlIds have Satisfied, Partial, and Gap states defined for each active framework, including ISO 27001:2022 Annex A citations.
-
-### DNS Resolution
-
-All DNS lookups query Google Public DNS (8.8.8.8) with Cloudflare (1.1.1.1) as fallback. This bypasses internal resolvers, split-brain DNS, and Microsoft-cached state — results reflect what the public internet sees. `-DnssecOk` is passed on all lookups to surface RRSIG records. Microsoft-managed `onmicrosoft.com` domains are excluded from DMARC and MTA-STS scoring.
-
----
-
-## Requirements
-
-### PowerShell Version
-
-PowerShell 7+ required. Windows PowerShell 5.1 not supported.
-
-```powershell
-winget install Microsoft.PowerShell
-```
-
-### Modules
-
-```powershell
-Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force
-Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
-```
-
-### Permissions
-
-| Scope | Required For |
-|---|---|
-| Exchange Admin or Global Admin | Exchange Online collection |
-| `Policy.Read.ConditionalAccess` | CA policy collection |
-| `Policy.Read.All` | Named Locations |
-| `Directory.Read.All` | Admin roles, guest inventory, service principals |
-| `AuditLog.Read.All` | Sign-in log telemetry, stale accounts |
-| `Reports.Read.All` | User MFA registration status (`-MFAReport`) |
-| `SecurityEvents.Read.All` | Secure Score (`-SecureScore`) |
-
----
-
-## First Run Setup
-
-Run these steps in order from PowerShell 7.
-
-```powershell
-# 1. Install PowerShell 7 if needed
-winget install Microsoft.PowerShell
-
-# 2. Install required modules
-Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force
-Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
-
-# 3. Set execution policy
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# 4. Navigate to tool folder
-cd ~\Downloads\NLS-Assessment
-
-# 5. Unblock downloaded files
-Unblock-File -Path .\Invoke-NLSAssessment.ps1
-Unblock-File -Path .\Invoke-NLSSummary.ps1
-Unblock-File -Path .\Modules\*.psm1
-
-# 6. Generate hash manifest (required before first run)
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
-
-# 7. Run first assessment
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Quick
+.github/workflows/security.yml    CI: PSScriptAnalyzer + Pester + Gitleaks + TruffleHog
 ```
 
 ---
 
-## Coverage Map
+## Controls Coverage
 
-| Status | Meaning |
-|---|---|
-| Collected | Data retrieved and scored successfully |
-| Partial | Data retrieved but incomplete — permissions or licensing gap |
-| NotCollected | Operator did not pass the required flag |
-| Unsupported | Tenant licensing does not support this control |
+**143 controls across 9 workloads**
 
----
-
-## Operational Notes
-
-- Always run from a dedicated admin account
-- Use `-RedactSensitiveData` for any artifacts leaving your workstation
-- The `output\` directory is gitignored — do not commit assessment artifacts
-- `modules.sha256` is gitignored — each operator generates their own baseline
-- Run from PowerShell 7 — Windows PowerShell 5.1 not supported
-- First Graph run against a new tenant prompts for browser consent
-- After replacing any module file, run `-GenerateManifest` before next assessment
-- Use `-DebugAll` when troubleshooting — outputs full data flow traces to console
-
----
-
-## Troubleshooting
-
-### Script blocked on first run
-
-```powershell
-Unblock-File -Path .\Invoke-NLSAssessment.ps1
-Unblock-File -Path .\Invoke-NLSSummary.ps1
-Unblock-File -Path .\Modules\*.psm1
-```
-
-### Execution policy error
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-### Module integrity violation
-
-Symptom: `MODULE INTEGRITY VIOLATION DETECTED`
-
-Expected after any module update. Fix:
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -GenerateManifest
-```
-
-If not caused by a legitimate update, re-download the repo and inspect what changed.
-
-### Conditional Access or Named Locations returns Partial (AccessDenied)
-
-Symptom: `[AccessDenied] : required scopes are missing in the token`
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -ClearToken
-```
-
-Accept all permissions when the browser opens.
-
-### DNS section not rendering
-
-Symptom: DNS Email Record Verification missing from Section 3
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P Full -DebugDNS
-```
-
-Look for `[DNS-DEBUG] dnsExt null=` line. If null=True, DNS collection failed — check network access to 8.8.8.8. If null=False but domains=0, `Get-AcceptedDomain` returned no results.
-
-### Graph module assembly conflict
-
-Symptom: `Could not load file or assembly 'Microsoft.Graph.Authentication'`
-
-```powershell
-Install-Module Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
-```
-
-Close and reopen PowerShell 7.
-
-### Defender for Office 365 Cmdlets Not Found
-
-Symptom: `DefenderO365 | Partial | The term 'Get-SafeAttachmentPolicy' is not recognized`
-
-Cause: Tenant does not have Defender for Office 365 Plan 1 or Plan 2. This is a licensing gap, not a security finding. All other controls still assess correctly.
-
-### Device compliance blocking Graph consent
-
-Symptom: `AADSTS53000: Device is not in required device state`
-
-Options: run from a compliant enrolled device, use `-NoGraph` for Exchange-only checks, or exclude the admin account from the device compliance CA policy temporarily.
-
-### Portfolio summary shows no reports
-
-Run at least one assessment first:
-
-```powershell
-.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@contoso.com -P MSP
-.\Invoke-NLSSummary.ps1
-```
-
----
-
-## Framework Dictionary Versions
-
-| Framework | Version Mapped | Last Updated |
+| Workload | Controls | Key Areas |
 |---|---|---|
-| NIST SP 800-53 | Rev 5 Release 5.2.0 | 2026-04-27 |
-| CIS Controls | v8.1 June 2024 | 2026-04-27 |
-| HIPAA Security Rule | 45 CFR 164.312 current enforceable | 2026-04-27 |
-| HIPAA NPRM | December 27 2024 proposed rule | 2026-04-27 |
-| ISO/IEC 27001 | 2022 Annex A | 2026-04-27 |
+| Entra ID (AAD) | 32 | MFA, legacy auth, CA policies, PIM, guest access, SSPR, app consent, break-glass |
+| Exchange Online | 21 | Audit, SMTP auth, auto-forward, DKIM, anti-phish, modern auth, DMARC |
+| DNS Email Auth | 6 | SPF, DKIM, DMARC enforcement, MTA-STS, TLS-RPT, DNSSEC |
+| Defender | 16 | Safe Attachments/Links, spoof intel, ZAP, quarantine, preset policies |
+| SharePoint | 17 | External sharing, OneDrive sync, custom script, link expiration, guest expiry |
+| Teams | 18 | Federation, consumer accounts, meeting lobby, external chat, app governance |
+| Purview | 14 | Unified audit log, DLP, sensitivity labels, retention, insider risk |
+| Intune | 13 | Device compliance, BitLocker, EDR, ASR rules, MAM, conditional launch |
+| Power Platform | 6 | Tenant isolation, DLP policy, connector classification, governance |
+
+**Severity distribution:** 9 Critical · 59 High · 52 Medium · 23 Low
+
+**Framework citations per control:** CIS M365 v6.0.1 · CISA SCuBA v1.7.1 · NIST SP 800-53 Rev 5 · CMMC 2.0 L2 · MITRE ATT&CK v16.1
 
 ---
 
-## Version History
+## Security Hardening
 
-| Version | Date | Notes |
+This tool is hardened against the threats it assesses. Every production file has:
+
+- `#Requires -Version 7.0` — blocks PS 5.1 MSHTML injection (CVE-2025-54100)
+- `Set-StrictMode -Version Latest` — catches uninitialized variables at runtime
+- `$ErrorActionPreference = 'Stop'` — no silent error swallowing
+- `-LiteralPath` on all file operations — no wildcard expansion (OWASP A01)
+- `-Encoding utf8` on all file writes — explicit encoding (ASVS V16.2.3)
+- Input validation on every parameter — UPN, domain, path, controlId (ASVS V5.1.3)
+- `try/finally` session cleanup — guaranteed disconnect on any error (ASVS V7.3.2)
+- TLS 1.2/1.3 enforced at entry — no downgrade (ASVS V11.2.2)
+- Process-scoped MSAL token cache — no cross-session token leakage
+- XSS prevention — all tenant data passes through `ConvertTo-NLSHtmlSafe` before HTML output
+
+**controls.json content validation** — before any evaluator runs, the loader validates every control against allowlists for Severity, Workload, Category, ControlId format, prefix/workload consistency, injection patterns in Remediation, and duplicate IDs. Fail-closed: any violation throws.
+
+**77 automated Pester tests** cover all of the above — static analysis on every push via GitHub Actions.
+
+```powershell
+# Run the security test suite
+Invoke-Pester ./Testing/NLS.Security.Tests.ps1 -Output Detailed
+```
+
+---
+
+## Client Registry (MSP)
+
+Edit `Config\clients.json` to add tenants:
+
+```json
+{
+  "ClientName":   "Client Name",
+  "TenantDomain": "client.com",
+  "TenantId":     "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "DelegatedOrg": "client.onmicrosoft.com",
+  "DnsDomains":   ["client.com"],
+  "SkipPurview":  false,
+  "SkipPowerPlatform": true,
+  "Active":       true
+}
+```
+
+Get TenantId from: **Entra ID > Overview > Tenant ID**  
+Get DelegatedOrg from: **Partner Center > Customers > client > Domains** (find the `.onmicrosoft.com` domain)
+
+GDAP relationships must be active in Partner Center before the batch runner can access client tenants.
+
+---
+
+## CI/CD
+
+GitHub Actions runs on every push to `main`:
+
+| Job | Tool | What it checks |
 |---|---|---|
-| 2.0.0 | 2026-04-27 | ISO 27001:2022 Annex A citations on all 33 controls, correlation engine with 5 MITRE ATT&CK-mapped attack path rules, Secure Score prioritized roadmap, SharedMailboxSignIn control, 33-control full collection coverage |
-| 1.x.x | 2026-04-26 | Production release — 32 scored controls, live DNS via 8.8.8.8, full framework citations, DMARC/MTA-STS onmicrosoft.com exclusion, -DebugAll, delta, portfolio, remediation scripts, SHA-256 integrity |
-| 1.0.0 | 2026-04-24 | Initial release — public repo nextlayersec-assessment |
-
----
-
-## Related
-
-- [nextlayersec-assessment](https://github.com/Blackvectra/nextlayersec-assessment) — v1.0.0 public release
-- [nextlayersec-email-security](https://github.com/Blackvectra/nextlayersec-email-security) — Full email security stack documentation
+| PSScriptAnalyzer | PowerShell static analysis | Code quality, syntax, anti-patterns |
+| Pester | NLS.Security.Tests.ps1 | 77 OWASP/ASVS security invariants |
+| Gitleaks | Secret detection | Credentials, tokens, API keys |
+| TruffleHog | Deep secret scan | Verified secrets in all commits |
+| SBOM | CycloneDX cdxgen | Software bill of materials on release |
 
 ---
 
 ## License
 
-CC BY-ND 4.0 — See [LICENSE](LICENSE) for details.
+Internal use — NextLayerSec. Not licensed for redistribution.
 
 ---
 
-<div align="center">
-
-**[NextLayerSec](https://nextlayersec.io)** &nbsp;|&nbsp;
-**[LinkedIn](https://linkedin.com/company/nextlayersec)** &nbsp;|&nbsp;
-**[GitHub](https://github.com/Blackvectra)**
-
-*Cybersecurity consulting for organizations that take security seriously.*
-
-</div>
+*NLS-Assessment v4.5.5 · 143 controls · 153 exported functions · 77 Pester tests*

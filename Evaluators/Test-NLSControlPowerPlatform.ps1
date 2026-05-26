@@ -1,0 +1,157 @@
+#Requires -Version 7.0
+#
+# Test-NLSControlPowerPlatform.ps1
+# Evaluates Power Platform controls. Reads: Get-NLSRawData -Key 'PowerPlatform'
+#
+# Controls:
+#   PPL-1.1  Environment count within governance baseline
+#   PPL-1.2  DLP policy active (requires Microsoft.PowerApps.Administration module)
+#   PPL-1.3  Default environment tenant isolation
+#
+
+function Test-NLSControlPowerPlatform {
+    [CmdletBinding()] param()
+    $raw = Get-NLSRawData -Key 'PowerPlatform'
+    if (-not $raw -or -not $raw.Success) {
+        foreach ($cid in @('PPL-1.1','PPL-1.2','PPL-1.3')) {
+            $c = Get-NLSControlById -ControlId $cid
+            if ($c) {
+                Add-NLSFinding -ControlId $cid -State 'NotApplicable' `
+                    -Category 'Power Platform' -Title $c.Title `
+                    -Detail 'Power Platform collector did not run.'
+            }
+        }
+        return
+    }
+
+    $d = $raw.Data
+
+    # PPL-1.1 — Environment count
+    $c = Get-NLSControlById -ControlId 'PPL-1.1'
+    if ($c) {
+        $envCount = @($d.Environments).Count
+        if ($envCount -eq 0) {
+            Add-NLSFinding -ControlId 'PPL-1.1' -State 'Satisfied' `
+                -Category 'Power Platform' -Title $c.Title -Severity 'Informational' `
+                -CurrentValue 'No Power Platform environments'
+        } elseif ($envCount -le 10) {
+            Add-NLSFinding -ControlId 'PPL-1.1' -State 'Satisfied' `
+                -Category 'Power Platform' -Title $c.Title -Severity 'Informational' `
+                -CurrentValue "$envCount environments — within governance baseline"
+        } else {
+            Add-NLSFinding -ControlId 'PPL-1.1' -State 'Partial' `
+                -Category 'Power Platform' -Title $c.Title -Severity 'Medium' `
+                -Detail "$envCount environments exist. Review for unused or trial environments that may host shadow IT data flows." `
+                -CurrentValue "$envCount environments" `
+                -RequiredValue 'Documented inventory; remove unused environments' `
+                -Remediation $c.Remediation `
+                -FrameworkIds (Get-NLSFrameworkCitations -ControlId 'PPL-1.1')
+        }
+    }
+
+    # PPL-1.2 — DLP policy
+    $c = Get-NLSControlById -ControlId 'PPL-1.2'
+    if ($c) {
+        if (-not $d.DLPAvailable) {
+            Add-NLSFinding -ControlId 'PPL-1.2' -State 'NotApplicable' `
+                -Category 'Power Platform' -Title $c.Title `
+                -Detail 'Power Platform DLP data not available. Install Microsoft.PowerApps.Administration.PowerShell for full DLP assessment: Install-Module Microsoft.PowerApps.Administration.PowerShell -Scope CurrentUser -Force'
+        } else {
+            $count = @($d.DLPPolicies).Count
+            if ($count -gt 0) {
+                Add-NLSFinding -ControlId 'PPL-1.2' -State 'Satisfied' `
+                    -Category 'Power Platform' -Title $c.Title -Severity 'Informational' `
+                    -CurrentValue "$count DLP policies active"
+            } else {
+                Add-NLSFinding -ControlId 'PPL-1.2' -State 'Gap' `
+                    -Category 'Power Platform' -Title $c.Title -Severity $c.Severity `
+                    -Detail 'No Power Platform DLP policies. Flows can connect arbitrary external services and exfiltrate data.' `
+                    -Remediation $c.Remediation `
+                    -FrameworkIds (Get-NLSFrameworkCitations -ControlId 'PPL-1.2')
+            }
+        }
+    }
+
+    # PPL-1.3 — Default environment tenant isolation
+    # v4.6.4 ADVISORY MARK: no programmatic check, manual review required.
+    $c = Get-NLSControlById -ControlId 'PPL-1.3'
+    if ($c) {
+        Add-NLSFinding -ControlId 'PPL-1.3' -State 'Partial' `
+            -Category 'Power Platform' -Title "$($c.Title) (Manual review required)" -Severity 'Medium' `
+            -Detail 'ADVISORY ONLY — no programmatic check is implemented for this control (v4.6.4). Tenant isolation status requires Microsoft.PowerApps.Administration.PowerShell module to assess.' `
+            -Remediation $c.Remediation `
+            -FrameworkIds (Get-NLSFrameworkCitations -ControlId 'PPL-1.3')
+    }
+}
+
+# ── PPL-2.1 Power Platform Connector Classification Reviewed ─────────────────
+function Test-NLSControlPPLConnectorClassification {
+    [CmdletBinding()] param()
+    $cid = 'PPL-2.1'; $ctrl = Get-NLSControlById -ControlId $cid; if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+    $ppl = Get-NLSRawData -Key 'PowerPlatform'
+    if (-not $ppl -or -not $ppl.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' -Category $ctrl.Category `
+            -Title $ctrl.Title -Detail 'Power Platform DLP data not collected'; return
+    }
+    $policies     = @($ppl.Data.DLPPolicies ?? @())
+    $businessConns = @($policies | ForEach-Object { @($_.BusinessConnectors ?? @()).Count } | Measure-Object -Sum).Sum
+    $blockedConns  = @($policies | ForEach-Object { @($_.BlockedConnectors ?? @()).Count } | Measure-Object -Sum).Sum
+    if ($businessConns -gt 0 -or $blockedConns -gt 0) {
+        Add-NLSFinding -ControlId $cid -State 'Satisfied' -Category $ctrl.Category `
+            -Title $ctrl.Title -Severity 'Informational' -FrameworkIds $cit `
+            -Detail "$($policies.Count) DLP policy(ies) with connector classifications: Business=$businessConns, Blocked=$blockedConns."
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'Gap' -Category $ctrl.Category `
+            -Title $ctrl.Title -Severity $ctrl.Severity -FrameworkIds $cit `
+            -Detail 'No connector classifications found in Power Platform DLP policies. All connectors have equal access to business and non-business data.' `
+            -Remediation $ctrl.Remediation
+    }
+}
+
+# ── PPL-2.2 Power Automate Governance Policy ──────────────────────────────────
+function Test-NLSControlPPLAutomate {
+    [CmdletBinding()] param()
+    $cid = 'PPL-2.2'; $ctrl = Get-NLSControlById -ControlId $cid; if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+    $ppl = Get-NLSRawData -Key 'PowerPlatform'
+    if (-not $ppl -or -not $ppl.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' -Category $ctrl.Category `
+            -Title $ctrl.Title -Detail 'Power Platform settings not collected'; return
+    }
+    $guestFlows     = Get-NLSNestedProperty -Object $ppl -Path 'Data.TenantSettings.DisableFlowsForGuestUsers' -Default $false
+    $gaps = @()
+    if (-not $guestFlows) { $gaps += 'Guest users can create flows' }
+    if ($gaps.Count -eq 0) {
+        Add-NLSFinding -ControlId $cid -State 'Satisfied' -Category $ctrl.Category `
+            -Title $ctrl.Title -Severity 'Informational' -FrameworkIds $cit `
+            -Detail 'Power Automate governance settings configured — guest users cannot create flows.'
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'Partial' -Category $ctrl.Category `
+            -Title $ctrl.Title -Severity 'Medium' -FrameworkIds $cit `
+            -Detail "Power Automate governance gaps: $($gaps -join '; ')" -Remediation $ctrl.Remediation
+    }
+}
+
+# ── PPL-2.3 Power Apps Governance Policy ──────────────────────────────────────
+function Test-NLSControlPPLPowerApps {
+    [CmdletBinding()] param()
+    $cid = 'PPL-2.3'; $ctrl = Get-NLSControlById -ControlId $cid; if (-not $ctrl) { return }
+    $cit = Get-NLSFrameworkCitations -ControlId $cid
+    $ppl = Get-NLSRawData -Key 'PowerPlatform'
+    if (-not $ppl -or -not $ppl.Success) {
+        Add-NLSFinding -ControlId $cid -State 'NotApplicable' -Category $ctrl.Category `
+            -Title $ctrl.Title -Detail 'Power Platform settings not collected'; return
+    }
+    $canvasAppsEnabled = -not (Get-NLSNestedProperty -Object $ppl -Path 'Data.TenantSettings.DisablePortalsCreationByNonAdminUsers' -Default $false)
+    if (-not $canvasAppsEnabled) {
+        Add-NLSFinding -ControlId $cid -State 'Satisfied' -Category $ctrl.Category `
+            -Title $ctrl.Title -Severity 'Informational' -FrameworkIds $cit `
+            -Detail 'Non-admin users are restricted from creating Power Apps portals.'
+    } else {
+        Add-NLSFinding -ControlId $cid -State 'Partial' -Category $ctrl.Category `
+            -Title $ctrl.Title -Severity 'Low' -FrameworkIds $cit `
+            -Detail 'Non-admin users can create Power Apps portals. Unmanaged portals may expose organizational data to unauthenticated users.' `
+            -Remediation $ctrl.Remediation
+    }
+}

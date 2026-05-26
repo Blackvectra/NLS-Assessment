@@ -1,0 +1,19 @@
+{
+  "clients": [
+    {
+      "ClientName":        "Example Client",
+      "TenantDomain":      "example.com",
+      "TenantId":          "00000000-0000-0000-0000-000000000000",
+      "DelegatedOrg":      "example.onmicrosoft.com",
+      "DnsDomains":        ["example.com"],
+      "SkipPurview":       false,
+      "SkipTeams":         false,
+      "SkipSharePoint":    false,
+      "SkipIntune":        false,
+      "SkipPowerPlatform": false,
+      "SkipDNS":           false,
+      "Notes":             "Sample entry. Replace with real client data before running.",
+      "Active":            false
+    }
+  ]
+}

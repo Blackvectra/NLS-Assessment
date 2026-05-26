@@ -1,22 +1,27 @@
-# Assessment output artifacts -- never commit client data
-output/
-*.md
-!README.md
+# Generated reports / scratch
+Reports/
+*.html.tmp
+*.bak
 
-# Hash manifest -- auto-generated each run, not committed
-Modules/modules.sha256
+# PowerShell module cache
+PSGetModuleInfo.xml
 
-# PowerShell session artifacts
-*.ps1xml
-*.psd1.bak
+# Secrets / credentials — never commit
+*.cred
+*.pfx
+*.pem
+secrets.ps1
+.env
+.env.local
 
-# Windows
+# OS
 Thumbs.db
-desktop.ini
+.DS_Store
 
-# VS Code
+# Editor
 .vscode/
-*.code-workspace
+.idea/
+*.swp
 
-# Logs
-*.log
+# Claude Code session metadata (worktrees, settings.local.json, etc.)
+.claude/
