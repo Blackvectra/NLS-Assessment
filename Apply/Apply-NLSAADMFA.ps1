@@ -73,7 +73,7 @@ function Apply-NLSAADMFA {
         # tenant has a $null intermediate object — the entire Where-Object
         # short-circuits to empty → idempotency check returns 0 → DUPLICATE
         # CA POLICY gets created on every apply. Replace with Get-NLSNestedProperty.
-        $nrgOwned = @($existing | Where-Object {
+        $nlsOwned = @($existing | Where-Object {
             $includeUsers = Get-NLSNestedProperty -Object $_ -Path 'Conditions.Users.IncludeUsers' -Default @()
             $builtInCtrls = Get-NLSNestedProperty -Object $_ -Path 'GrantControls.BuiltInControls' -Default @()
             $authStrengId = Get-NLSNestedProperty -Object $_ -Path 'GrantControls.AuthenticationStrength.Id' -Default ''
@@ -105,8 +105,8 @@ function Apply-NLSAADMFA {
         $result.Before = [PSCustomObject]@{
             MfaPolicyCount     = $compliant.Count
             MfaPolicies        = @($compliant | Select-Object Id, DisplayName, State)
-            NLSOwnedPolicyCount = $nrgOwned.Count
-            NLSOwnedPolicies   = @($nrgOwned  | Select-Object Id, DisplayName, State)
+            NLSOwnedPolicyCount = $nlsOwned.Count
+            NLSOwnedPolicies   = @($nlsOwned  | Select-Object Id, DisplayName, State)
         }
 
         if ($compliant.Count -gt 0) {
@@ -117,9 +117,9 @@ function Apply-NLSAADMFA {
 
         # An NLS-* MFA-shape policy already exists (likely report-only awaiting
         # operator promotion). Do NOT create a duplicate.
-        if ($nrgOwned.Count -gt 0) {
+        if ($nlsOwned.Count -gt 0) {
             $result.Status = 'AlreadyCompliant'
-            $result.Action = "Existing NLS-* MFA policy found ($($nrgOwned[0].DisplayName), state $($nrgOwned[0].State)) — no duplicate created."
+            $result.Action = "Existing NLS-* MFA policy found ($($nlsOwned[0].DisplayName), state $($nlsOwned[0].State)) — no duplicate created."
             $result.After  = $result.Before
             return [PSCustomObject]$result
         }

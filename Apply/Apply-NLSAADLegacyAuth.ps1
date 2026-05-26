@@ -76,7 +76,7 @@ function Apply-NLSAADLegacyAuth {
         # M-Idempotency: also match NLS-* policies regardless of state, so a
         # renamed-or-report-only NLS policy doesn't cause us to create a
         # duplicate on the next apply.
-        $nrgOwned = @($existing | Where-Object {
+        $nlsOwned = @($existing | Where-Object {
             $cat = Get-NLSNestedProperty -Object $_ -Path 'Conditions.ClientAppTypes' -Default @()
             $bic = Get-NLSNestedProperty -Object $_ -Path 'GrantControls.BuiltInControls' -Default @()
             $_.DisplayName -like 'NLS-*' -and
@@ -90,8 +90,8 @@ function Apply-NLSAADLegacyAuth {
         $result.Before = [PSCustomObject]@{
             BlockingPolicyCount  = $blocking.Count
             BlockingPolicies     = @($blocking | Select-Object Id, DisplayName, State)
-            NLSOwnedPolicyCount  = $nrgOwned.Count
-            NLSOwnedPolicies     = @($nrgOwned | Select-Object Id, DisplayName, State)
+            NLSOwnedPolicyCount  = $nlsOwned.Count
+            NLSOwnedPolicies     = @($nlsOwned | Select-Object Id, DisplayName, State)
         }
 
         if ($blocking.Count -gt 0) {
@@ -100,9 +100,9 @@ function Apply-NLSAADLegacyAuth {
             return [PSCustomObject]$result
         }
 
-        if ($nrgOwned.Count -gt 0) {
+        if ($nlsOwned.Count -gt 0) {
             $result.Status = 'AlreadyCompliant'
-            $result.Action = "Existing NLS-* legacy-auth block policy found ($($nrgOwned[0].DisplayName), state $($nrgOwned[0].State)) — no duplicate created."
+            $result.Action = "Existing NLS-* legacy-auth block policy found ($($nlsOwned[0].DisplayName), state $($nlsOwned[0].State)) — no duplicate created."
             $result.After  = $result.Before
             return [PSCustomObject]$result
         }
