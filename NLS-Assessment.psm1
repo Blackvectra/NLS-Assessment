@@ -59,7 +59,7 @@ $script:NLSBrand = if (Test-Path -LiteralPath $brandPath) {
 if (-not $script:NLSBrand) {
     $script:NLSBrand = @{
         CompanyName    = 'NextLayerSec'
-        Phone          = '(701) 250-9400'
+        Phone          = ''
         Website        = 'nextlayersec.io'
         Email          = 'sales@nextlayersec.io'
         PrimaryColor   = '#1a3a6b'

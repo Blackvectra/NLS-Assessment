@@ -1,6 +1,6 @@
 @{
     CompanyName    = 'NextLayerSec'
-    Phone          = '(701) 250-9400'
+    Phone          = ''
     Website        = 'https://nextlayersec.io'
     Email          = 'security@nextlayersec.io'
     Address        = ''

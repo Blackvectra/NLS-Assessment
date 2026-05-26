@@ -69,7 +69,7 @@ Each relevant control has a published `IncidentRiskMultiplier` per incident type
 
 ## Feature 3 — Privileged Account Behavioral Baseline
 
-**Problem.** Microsoft's risky-sign-in is anchored to global threat intel, not per-tenant norms. An admin who has never signed in from outside North Dakota at 2am is a meaningful tenant-specific signal.
+**Problem.** Microsoft's risky-sign-in is anchored to global threat intel, not per-tenant norms. An admin who has never signed in from outside the operator's local region at 2am is a meaningful tenant-specific signal.
 
 **Architecture.**
 - New collector: `Collectors/AAD/Invoke-NLSCollectAADAdminSignInTelemetry.ps1`.

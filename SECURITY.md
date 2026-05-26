@@ -90,4 +90,4 @@ Do not open public GitHub issues for security vulnerabilities.
 
 ---
 
-*NLS-Assessment v4.5.5 · Hardened against OWASP Top 10:2025, ASVS v5, CVE-2025-54100*
+*NLS-Assessment v4.6.4 · Hardened against OWASP Top 10:2025, ASVS v5, CVE-2025-54100*
