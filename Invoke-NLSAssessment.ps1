@@ -3,7 +3,7 @@
 # Invoke-NLSAssessment.ps1
 # Entry point for NLS-Assessment (version read from module manifest at runtime)
 #
-# NextLayerSec
+# NextLayerSec | NextLayerSec LLC
 # Author: NextLayerSec
 #
 # Flow:
@@ -123,7 +123,7 @@ try {
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host " NLS-Assessment v$($script:NLSAssessmentVersion) — Read-Only M365 Security Assessment" -ForegroundColor Cyan
-Write-Host " NextLayerSec"                     -ForegroundColor Cyan
+Write-Host " NextLayerSec | NextLayerSec LLC"                     -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -480,19 +480,23 @@ if (-not $JsonOnly) {
     # and -ExecutivePath are mandatory on the function — omitting them in v4.6.1
     # caused PowerShell to interactively prompt and then fail.
     if (Get-Command Publish-NLSRemediationPlaybook -ErrorAction SilentlyContinue) {
-        $pbPath   = Join-Path $OutputPath "$baseName-playbook.md"
-        $execPath = Join-Path $OutputPath "$baseName-executive.md"
+        $pbPath     = Join-Path $OutputPath "$baseName-playbook.md"
+        $execPath   = Join-Path $OutputPath "$baseName-executive.md"
+        $pbHtmlPath = Join-Path $OutputPath "$baseName-playbook.html"
         try {
             Publish-NLSRemediationPlaybook `
                 -Metadata $reportMetadata `
                 -Findings $findings `
                 -Connections $conn `
                 -OutputPath $pbPath `
-                -ExecutivePath $execPath
-            Write-Host "  [+] Playbook: $pbPath" -ForegroundColor Green
-            Write-Host "  [+] Executive: $execPath" -ForegroundColor Green
-            Set-NLSSensitiveFileAcl -Path $pbPath   -ErrorAction SilentlyContinue
-            Set-NLSSensitiveFileAcl -Path $execPath -ErrorAction SilentlyContinue
+                -ExecutivePath $execPath `
+                -HtmlOutputPath $pbHtmlPath
+            Write-Host "  [+] Playbook (md):   $pbPath" -ForegroundColor Green
+            Write-Host "  [+] Playbook (html): $pbHtmlPath" -ForegroundColor Green
+            Write-Host "  [+] Executive:       $execPath" -ForegroundColor Green
+            Set-NLSSensitiveFileAcl -Path $pbPath     -ErrorAction SilentlyContinue
+            Set-NLSSensitiveFileAcl -Path $execPath   -ErrorAction SilentlyContinue
+            Set-NLSSensitiveFileAcl -Path $pbHtmlPath -ErrorAction SilentlyContinue
         } catch { Write-Warning "Playbook publish failed: $($_.Exception.Message)" }
     }
 
