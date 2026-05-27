@@ -126,7 +126,7 @@ function Test-NLSControlIntune {
     $c = Get-NLSControlById -ControlId 'INT-1.5'
     if ($c) {
         # Check endpoint security AV policies; fall back to enrollment config as proxy
-        $avPolicies = @($d.EndpointSecurityPolicies | Where-Object { $_.TemplateType -match 'Antivirus|MicrosoftDefender' })
+        $avPolicies = @($d.EndpointSecurityPolicies | Where-Object { (Get-NLSSafeProperty -Object $_ -Property 'TemplateType') -match 'Antivirus|MicrosoftDefender' })
         $enrollConfig = @($d.EnrollmentConfig)
         if ($avPolicies.Count -gt 0) {
             Add-NLSFinding -ControlId 'INT-1.5' -State 'Satisfied' `
@@ -202,12 +202,12 @@ function Test-NLSControlIntuneMacEncryption {
     $cit = Get-NLSFrameworkCitations -ControlId $cid
     $int = Get-NLSRawData -Key 'Intune-DeviceCompliance'
     if (-not $int -or -not $int.Success) { Add-NLSFinding -ControlId $cid -State 'NotApplicable' -Category $ctrl.Category -Title $ctrl.Title -Detail 'Intune compliance data not collected'; return }
-    $macPolicies = @($int.Data.CompliancePolicies | Where-Object { $_.Platform -match 'macOS|Mac' })
+    $macPolicies = @($int.Data.CompliancePolicies | Where-Object { (Get-NLSSafeProperty -Object $_ -Property 'Platform') -match 'macOS|Mac' })
     if ($macPolicies.Count -eq 0) {
         Add-NLSFinding -ControlId $cid -State 'NotApplicable' -Category $ctrl.Category -Title $ctrl.Title -Detail 'No macOS compliance policies found — may not have managed macOS devices'
         return
     }
-    $encRequired = @($macPolicies | Where-Object { $_.SystemIntegrityProtectionEnabled -or $_.StorageRequireEncryption }).Count -gt 0
+    $encRequired = @($macPolicies | Where-Object { (Get-NLSSafeProperty -Object $_ -Property 'SystemIntegrityProtectionEnabled') -or (Get-NLSSafeProperty -Object $_ -Property 'StorageRequireEncryption') }).Count -gt 0
     if ($encRequired) {
         Add-NLSFinding -ControlId $cid -State 'Satisfied' -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' -FrameworkIds $cit -Detail 'macOS compliance policy requires FileVault encryption.'
     } else {
@@ -287,7 +287,7 @@ function Test-NLSControlIntuneConditionalLaunch {
             -Title $ctrl.Title -Detail 'Intune app protection data not collected'; return
     }
     $appPolicies = @($int.Data.AppProtectionPolicies ?? @())
-    $withLaunch  = @($appPolicies | Where-Object { @($_.ConditionalLaunchSettings ?? @()).Count -gt 0 })
+    $withLaunch  = @($appPolicies | Where-Object { @(Get-NLSSafeProperty -Object $_ -Property 'ConditionalLaunchSettings' -Default @()).Count -gt 0 })
     if ($withLaunch.Count -gt 0) {
         Add-NLSFinding -ControlId $cid -State 'Satisfied' -Category $ctrl.Category `
             -Title $ctrl.Title -Severity 'Informational' -FrameworkIds $cit `
@@ -368,11 +368,11 @@ function Test-NLSControlIntuneMobilePIN {
     $cit = Get-NLSFrameworkCitations -ControlId $cid
     $int = Get-NLSRawData -Key 'Intune-DeviceCompliance'
     if (-not $int -or -not $int.Success) { Add-NLSFinding -ControlId $cid -State 'NotApplicable' -Category $ctrl.Category -Title $ctrl.Title -Detail 'Intune data not collected'; return }
-    $mobilePolicies = @($int.Data.CompliancePolicies | Where-Object { $_.Platform -match 'iOS|Android' })
+    $mobilePolicies = @($int.Data.CompliancePolicies | Where-Object { (Get-NLSSafeProperty -Object $_ -Property 'Platform') -match 'iOS|Android' })
     if ($mobilePolicies.Count -eq 0) {
         Add-NLSFinding -ControlId $cid -State 'NotApplicable' -Category $ctrl.Category -Title $ctrl.Title -Detail 'No iOS or Android compliance policies — may not have managed mobile devices'; return
     }
-    $pinRequired = @($mobilePolicies | Where-Object { $_.PasswordRequired -eq $true -or $_.RequirePassword -eq $true }).Count -gt 0
+    $pinRequired = @($mobilePolicies | Where-Object { (Get-NLSSafeProperty -Object $_ -Property 'PasswordRequired') -eq $true -or (Get-NLSSafeProperty -Object $_ -Property 'RequirePassword') -eq $true }).Count -gt 0
     if ($pinRequired) {
         Add-NLSFinding -ControlId $cid -State 'Satisfied' -Category $ctrl.Category -Title $ctrl.Title -Severity 'Informational' -FrameworkIds $cit -Detail 'Mobile device compliance policy requires PIN or biometric authentication.'
     } else {
