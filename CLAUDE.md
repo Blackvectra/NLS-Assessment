@@ -2,7 +2,7 @@
 
 **Author:** NextLayerSec — nextlayersec.io
 **GitHub:** https://github.com/Blackvectra/NLS-Assessment
-**Version:** 4.6.4
+**Version:** 4.6.5
 **Language:** PowerShell 7.0+
 **Purpose:** Read-only Microsoft 365 security assessment framework for MSP multi-tenant environments.
 

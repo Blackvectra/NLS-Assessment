@@ -1,6 +1,6 @@
 @{
     # Module identity
-    ModuleVersion     = '4.6.4'
+    ModuleVersion     = '4.6.6'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'NextLayerSec'
     CompanyName       = 'NextLayerSec'
@@ -46,6 +46,7 @@
         'Test-NLSLicenseRequirementMet',
         'Get-NLSSafeProperty',
         'Get-NLSNestedProperty',
+        'Test-NLSSignatureStatus',
 
         # ── Collectors — AAD ──────────────────────────────────────────────────
         'Invoke-NLSCollectAADAuthPolicies',
@@ -286,10 +287,17 @@
     # and ExchangeOnlineManagement is pinned to the same 3.2.0 floor that
     # Install-NLSPrerequisites enforces (3.4.0+ has the WAM broker
     # NullReferenceException that the prereq script downgrades around).
+    # RequiredModules is intentionally minimal. Graph + EXO are mandatory for
+    # any assessment to function. MicrosoftTeams used to be listed here but
+    # was demoted to a soft dependency: Connect-NLSServices imports it
+    # on-demand inside the Teams collector and skips Teams gracefully if not
+    # installed. Listing it here as a hard requirement blocked the entire
+    # module from loading on operator workstations that hadn't installed
+    # Teams yet — the wrong failure mode for an optional collector.
+    # See: v4.6.6 hotfix.
     RequiredModules = @(
-        @{ ModuleName = 'Microsoft.Graph.Authentication'; ModuleVersion = '2.0.0' },
-        @{ ModuleName = 'ExchangeOnlineManagement';       ModuleVersion = '3.2.0' },
-        @{ ModuleName = 'MicrosoftTeams';                 ModuleVersion = '5.0.0' }
+        @{ ModuleName = 'Microsoft.Graph.Authentication'; ModuleVersion = '2.20.0' },
+        @{ ModuleName = 'ExchangeOnlineManagement';       ModuleVersion = '3.2.0' }
     )
 
     # Module metadata

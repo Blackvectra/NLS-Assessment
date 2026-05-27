@@ -170,6 +170,40 @@ function Publish-NLSRemediationScript {
     $null = $sb.AppendLine("}")
     $null = $sb.AppendLine("Import-Module `$nrgModule -Force -ErrorAction Stop")
     $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("# Load the matching assessment JSON FIRST so Apply-* dispatches can pass")
+    $null = $sb.AppendLine("# the original Finding object (every Apply-NLS* function takes -Finding [object]).")
+    $null = $sb.AppendLine("# The JSON sits next to this script: <baseName>-results.json where this")
+    $null = $sb.AppendLine("# script's basename is <baseName>-remediation.")
+    $null = $sb.AppendLine("# Running this BEFORE Connect-NLSServices means a missing/corrupt JSON")
+    $null = $sb.AppendLine("# fails fast without paying the Graph/EXO authentication cost.")
+    $null = $sb.AppendLine("`$scriptBase  = [System.IO.Path]::GetFileNameWithoutExtension(`$MyInvocation.MyCommand.Path)")
+    $null = $sb.AppendLine("`$resultsBase = `$scriptBase -replace '-remediation`$',''")
+    $null = $sb.AppendLine("`$resultsJson = Join-Path `$scriptDir (`"`$resultsBase-results.json`")")
+    $null = $sb.AppendLine("if (-not (Test-Path -LiteralPath `$resultsJson)) {")
+    $null = $sb.AppendLine("    Write-Error (`"Assessment results not found at `" + `$resultsJson + `". This script needs the original -results.json from the same run to pass Finding objects into Apply-* functions.`")")
+    $null = $sb.AppendLine("    return")
+    $null = $sb.AppendLine("}")
+    $null = $sb.AppendLine("try {")
+    $null = $sb.AppendLine("    `$assessment = Get-Content -LiteralPath `$resultsJson -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop")
+    $null = $sb.AppendLine("} catch {")
+    $null = $sb.AppendLine("    Write-Error (`"Failed to parse `" + `$resultsJson + `": `" + `$_.Exception.Message + `". The JSON may be truncated or corrupt; re-run Invoke-NLSAssessment to regenerate.`")")
+    $null = $sb.AppendLine("    return")
+    $null = $sb.AppendLine("}")
+    $null = $sb.AppendLine("if (`$null -eq `$assessment -or -not `$assessment.PSObject.Properties['Findings'] -or `$null -eq `$assessment.Findings) {")
+    $null = $sb.AppendLine("    Write-Error (`"Findings array missing from `" + `$resultsJson + `". The results JSON is the wrong shape; re-run Invoke-NLSAssessment to regenerate.`")")
+    $null = $sb.AppendLine("    return")
+    $null = $sb.AppendLine("}")
+    $null = $sb.AppendLine("`$findingsByCtrl = @{}")
+    $null = $sb.AppendLine("`$findingIndex = 0")
+    $null = $sb.AppendLine("foreach (`$fnd in `$assessment.Findings) {")
+    $null = $sb.AppendLine("    `$findingIndex++")
+    $null = $sb.AppendLine("    if (`$null -eq `$fnd -or -not `$fnd.PSObject.Properties['ControlId'] -or [string]::IsNullOrWhiteSpace([string]`$fnd.ControlId)) {")
+    $null = $sb.AppendLine("        Write-Error (`"Finding #`" + `$findingIndex + `" in `" + `$resultsJson + `" is missing a non-empty ControlId. The results JSON may be truncated, corrupt, or the wrong shape; re-run Invoke-NLSAssessment to regenerate.`")")
+    $null = $sb.AppendLine("        return")
+    $null = $sb.AppendLine("    }")
+    $null = $sb.AppendLine("    `$findingsByCtrl[`$fnd.ControlId] = `$fnd")
+    $null = $sb.AppendLine("}")
+    $null = $sb.AppendLine("")
     $null = $sb.AppendLine("# Authenticate. The Apply-* dispatch needs whichever services the gaps")
     $null = $sb.AppendLine("# touch — Connect-NLSServices figures that out and reuses any existing")
     $null = $sb.AppendLine("# session. Edit the -UserPrincipalName if you'd rather pin to a different")
@@ -260,11 +294,19 @@ function Publish-NLSRemediationScript {
             # SupportsShouldProcess on the outer script means -WhatIf and
             # -Confirm flow through to the Apply-* function automatically.
             $lines += "    Write-Host '  -> $ctrlIdL ($applyFn)' -ForegroundColor Cyan"
-            $lines += "    try {"
-            $lines += "        $applyFn -ErrorAction Stop"
-            $lines += "        Write-Host '     [+] applied' -ForegroundColor Green"
-            $lines += "    } catch {"
-            $lines += "        Write-Host (`"     [!] failed: `" + `$_.Exception.Message) -ForegroundColor Red"
+            # Look up the finding object from the loaded JSON — Apply-* requires
+            # -Finding [object] (mandatory). Falling back to a synthetic object
+            # would mask the real finding state from the Apply function's logic.
+            $lines += "    `$fnd = `$findingsByCtrl['$ctrlIdL']"
+            $lines += "    if (-not `$fnd) {"
+            $lines += "        Write-Host '     [!] finding not in results.json — skipping' -ForegroundColor Yellow"
+            $lines += "    } else {"
+            $lines += "        try {"
+            $lines += "            $applyFn -Finding `$fnd -ErrorAction Stop"
+            $lines += "            Write-Host '     [+] applied' -ForegroundColor Green"
+            $lines += "        } catch {"
+            $lines += "            Write-Host (`"     [!] failed: `" + `$_.Exception.Message) -ForegroundColor Red"
+            $lines += "        }"
             $lines += "    }"
         } else {
             # No Apply-* mapping — emit instruction as a comment block so the

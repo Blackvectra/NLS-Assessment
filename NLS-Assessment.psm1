@@ -32,7 +32,7 @@ $ErrorActionPreference = 'Stop'
 # directive in production code going forward.
 Set-StrictMode -Version Latest
 
-$script:NLSAssessmentVersion = '4.6.4'
+$script:NLSAssessmentVersion = '4.6.6'
 $script:NLSModuleRoot        = $PSScriptRoot
 
 # Thread-safe collections for module state
@@ -131,6 +131,7 @@ $script:ExportedFunctions = @(
     'Set-NLSSensitiveFileAcl', 'Set-NLSSensitiveFileContent',
     'Get-NLSTenantLicenseProfile', 'Test-NLSLicenseRequirementMet',
     'Get-NLSSafeProperty', 'Get-NLSNestedProperty',
+    'Test-NLSSignatureStatus',
 
     # ── Collectors — AAD ──────────────────────────────────────────────────────
     'Invoke-NLSCollectAADAuthPolicies', 'Invoke-NLSCollectAADCAPolicies',

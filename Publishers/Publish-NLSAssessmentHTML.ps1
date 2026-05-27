@@ -80,6 +80,14 @@ function Publish-NLSAssessmentHTML {
     $co = if ($brand['CompanyName']) { $brand['CompanyName'] } else { 'NextLayerSec' }
     $ph = if ($brand['Phone']) { $brand['Phone'] } else { '' }
     $ws = if ($brand['Website']) { $brand['Website'] } else { 'nextlayersec.io' }
+    # Normalize the Website value to a bare host so the templates below can
+    # consistently prepend `https://`. The branding config may store the full
+    # URL (`https://nextlayersec.io`) but the templates also assume bare-host.
+    # Without this strip, the footer rendered
+    # `<a href='https://https://nextlayersec.io'>` which the browser parsed as
+    # host=`https:` + path=`//nextlayersec.io` — visible as `https://https//`
+    # in the link text.
+    $ws = $ws -replace '^https?://', ''
     $lu = if ($brand['LogoUrl']) { $brand['LogoUrl'] } else { '' }
     $clientDisplay = if ($ClientName) { $ClientName } else { $Metadata.TenantDomain }
 
@@ -405,7 +413,7 @@ function Publish-NLSAssessmentHTML {
 
             $hasEx = $exHtml -ne ''
             $mico  = if ($hasEx) { '<span class="mico">&#9654;</span>' } else { '' }
-            $ca    = if ($hasEx) { "class='fr $rc exp' onclick='toggle(this)'" } else { "class='fr $rc'" }
+            $ca    = if ($hasEx) { "class='fr $rc exp'" } else { "class='fr $rc'" }
             $prev  = if ($d -and $f.State -in @('Gap','Partial')) {
                 $s2 = [string]$f.Detail; if ($s2.Length -gt 110) { hx($s2.Substring(0,107)) + '&hellip;' } else { $d }
             } elseif ($f.State -eq 'Satisfied' -and $f.CurrentValue) { $cv2 } else { '' }
@@ -554,11 +562,31 @@ function Publish-NLSAssessmentHTML {
     # bytes (between <script> and </script>), then emit script-src 'sha256-...'
     # in the CSP and drop 'unsafe-inline'. Defense-in-depth against future
     # accidental injection via report variable interpolation.
+    #
+    # Handlers are wired here via addEventListener instead of inline onclick=
+    # attributes. With strict CSP ('sha256-...' only) those inline handlers
+    # would require 'unsafe-hashes' — which we deliberately do not allow.
+    # Elements opt in via class='exp' (collapsible rows) or data-goto="<id>"
+    # (nav links).
     $inlineScript = @"
 
-function goto(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'})}
-function toggle(tr){var n=tr.nextElementSibling;if(n&&n.classList.contains('extr')){var s=n.style.display===''||n.style.display==='none';n.style.display=s?'table-row':'none';tr.classList.toggle('open',s)}}
 document.querySelectorAll('.extr').forEach(function(r){r.style.display='none'});
+document.querySelectorAll('[data-goto]').forEach(function(el){
+  el.addEventListener('click',function(){
+    var t=document.getElementById(el.getAttribute('data-goto'));
+    if(t)t.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+});
+document.querySelectorAll('tr.exp').forEach(function(tr){
+  tr.addEventListener('click',function(){
+    var n=tr.nextElementSibling;
+    if(n&&n.classList.contains('extr')){
+      var s=n.style.display===''||n.style.display==='none';
+      n.style.display=s?'table-row':'none';
+      tr.classList.toggle('open',s);
+    }
+  });
+});
 
 "@
     $scriptHashBytes = [System.Text.Encoding]::UTF8.GetBytes($inlineScript)
@@ -806,13 +834,13 @@ a{color:var(--A);text-decoration:none}a:hover{text-decoration:underline}
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="nav-a" onclick="goto('exec')">Overview</span>
-    <span class="nav-a" onclick="goto('fw-section')">Frameworks</span>
-    $(if($licGroups.Count -gt 0){'<span class="nav-a" onclick="goto(''licensing'')">License Gaps</span>'})
-    <span class="nav-a" onclick="goto('named')">Named Findings</span>
-    <span class="nav-a" onclick="goto('actions')">Priority Actions</span>
-    <span class="nav-a" onclick="goto('roadmap')">Roadmap</span>
-    <span class="nav-a" onclick="goto('findings')">All Findings</span>
+    <span class="nav-a" data-goto="exec">Overview</span>
+    <span class="nav-a" data-goto="fw-section">Frameworks</span>
+    $(if($licGroups.Count -gt 0){'<span class="nav-a" data-goto="licensing">License Gaps</span>'})
+    <span class="nav-a" data-goto="named">Named Findings</span>
+    <span class="nav-a" data-goto="actions">Priority Actions</span>
+    <span class="nav-a" data-goto="roadmap">Roadmap</span>
+    <span class="nav-a" data-goto="findings">All Findings</span>
   </div>
 </div>
 <div class="abar"></div>
