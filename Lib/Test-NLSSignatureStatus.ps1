@@ -74,7 +74,9 @@ function Test-NLSSignatureStatus {
     # macOS knows the cmdlets but the underlying CryptoAPI calls aren't there.
     # Detect early and return a typed "Unsupported" so the caller's logic
     # branches cleanly instead of crashing on platform-specific errors.
-    $isWindows = $IsWindows -or $env:OS -eq 'Windows_NT'
+    # Use the built-in $IsWindows automatic variable directly (PS 7+ guaranteed
+    # by #Requires) — don't shadow it. PSScriptAnalyzer flags
+    # PSAvoidAssignmentToAutomaticVariable on $isWindows assignment.
 
     # Resolve targets — single file vs directory
     $resolved = Resolve-Path -LiteralPath $Path
@@ -88,7 +90,7 @@ function Test-NLSSignatureStatus {
     }
 
     foreach ($item in $items) {
-        if (-not $isWindows) {
+        if (-not $IsWindows) {
             [pscustomobject]@{
                 Path             = $item.FullName
                 Status           = 'Unsupported'
