@@ -80,6 +80,14 @@ function Publish-NLSAssessmentHTML {
     $co = if ($brand['CompanyName']) { $brand['CompanyName'] } else { 'NextLayerSec' }
     $ph = if ($brand['Phone']) { $brand['Phone'] } else { '' }
     $ws = if ($brand['Website']) { $brand['Website'] } else { 'nextlayersec.io' }
+    # Normalize the Website value to a bare host so the templates below can
+    # consistently prepend `https://`. The branding config may store the full
+    # URL (`https://nextlayersec.io`) but the templates also assume bare-host.
+    # Without this strip, the footer rendered
+    # `<a href='https://https://nextlayersec.io'>` which the browser parsed as
+    # host=`https:` + path=`//nextlayersec.io` — visible as `https://https//`
+    # in the link text.
+    $ws = $ws -replace '^https?://', ''
     $lu = if ($brand['LogoUrl']) { $brand['LogoUrl'] } else { '' }
     $clientDisplay = if ($ClientName) { $ClientName } else { $Metadata.TenantDomain }
 
