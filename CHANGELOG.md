@@ -1,5 +1,40 @@
 # Changelog
 
+## v4.6.5 (2026-05-27)
+
+Patch release closing the correctness sweep defined in `docs/CORRECTNESS-SWEEP-v4.6.5.md`. No new features. Every defect surfaced by three real-tenant runs and a follow-on code-review audit is either Resolved here or explicitly tracked Open.
+
+### Fixed
+
+- **Per-tenant remediation script dispatch (Critical).** Generated `<tenant>-remediation.ps1` files called `Apply-NLS* -ErrorAction Stop` with no `-Finding` argument. Every `Apply-NLS*` function declares `[Parameter(Mandatory)] [object] $Finding`, so every dispatched call would have failed at runtime. The generated script now loads its sibling `<baseName>-results.json`, builds `$findingsByCtrl`, and passes `-Finding $fnd` per dispatch. The JSON-load runs BEFORE `Connect-NLSServices` so a missing or corrupt JSON fails fast without paying the Graph/EXO authentication cost. `ConvertFrom-Json` is wrapped in try/catch with a diagnostic message. `$assessment.Findings` is null-checked so an unexpected JSON shape produces an actionable error rather than silent zero-iteration.
+- **14 StrictMode property-access NREs** across AAD, Defender, EXO, Intune evaluators (PR #2, #4). Each was silently dropping one or more findings from real-tenant reports.
+- **`Get-Mailbox -ResultSize 1000` undercount.** Five EXO collector calls capped at 1000 mailboxes. Switched to `-ResultSize Unlimited` for population-counting calls.
+- **HTML playbook alias collision.** `function H` collided with the built-in `h` alias (= `Get-History -Id [long]`). Renamed to `EscHtml`.
+- **XLSX compliance matrix `'PCIDSS'` NRE.** All 10 framework-reference accesses now use `Get-NLSNestedProperty`. Also fixed the `PCIDASSS` column header typo.
+- **HTML entity leakage in markdown publishers.** `ConvertTo-NLSHtmlSafe` was being applied to markdown source. Markdown `EscMd` now escapes only characters that break markdown table/code-span structure.
+- **Findings-table sort under malformed enum values.** Defensive `?? 99` coerces unknown values to a sortable tail.
+
+### Security / privacy
+
+- **`.gitignore` now excludes `output/`.** NLS had the same gap as NRG (only `Reports/` was excluded); NLS never had real client data committed because the port excluded `output/` at copy time, but future `Invoke-NLSAssessment` runs would have started tracking output files.
+- **Sample HTML sanitization.** `sample-report/example-assessment.html` had 7 occurrences of real personal domain `mattlevorson.com` (secondary domain on the source tenant) and 2 admin display names rendered as `NextLayerSec` (collision from `Matthew Levorson → NextLayerSec` sanitization). Replaced with `example2.com` / `Admin 2` / `Admin 3`.
+- **Branding/PII leaks** in initial NLS port surfaced and fixed: NRG phone number in `branding.psd1`, "North Dakota" geographic identifier in CLAUDE.md, real client names NDACo / Dunn County in sample configs.
+
+### Documentation
+
+- New `docs/CORRECTNESS-SWEEP-v4.6.5.md` — prioritization rule, 24 Resolved entries with root cause and PR refs, 7 Open entries for follow-up, 3 misclassification entries deferred to v4.7, Definition of Done.
+- `CLAUDE.md` rewritten to describe the actual `LicenseRequirement`-per-control architecture.
+- New `docs/ROADMAP-v4.7.md` and `docs/ROADMAP-v4.8.md` — design only, no code.
+
+### Readability
+
+- `<tenant>-playbook.md` slimmed (TOC + checklist, no per-item framework wall or time-estimate).
+- New `<tenant>-playbook.html` artifact (strict CSP, Trusted Types, print stylesheet).
+- `<tenant>-executive.md` got a Bottom-line one-liner and Current state lines under top-5 priorities.
+- `<tenant>-assessment.md` findings table sorted Gap → Partial → Satisfied first; NotApplicable folded.
+- `<tenant>-remediation.ps1` is now actually runnable.
+- New `sample-report/example-assessment.html` so prospective users can see what the tool produces without running an assessment first.
+
 ## v4.5.5 (2025-05-18)
 
 Major architectural change: rebuilt on the v4.5.0 baseline pattern to eliminate runtime crashes caused by aggressive `Set-StrictMode -Version Latest` propagation into evaluator scope.
