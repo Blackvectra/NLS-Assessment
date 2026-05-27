@@ -32,7 +32,7 @@ $ErrorActionPreference = 'Stop'
 # directive in production code going forward.
 Set-StrictMode -Version Latest
 
-$script:NLSAssessmentVersion = '4.6.5'
+$script:NLSAssessmentVersion = '4.6.6'
 $script:NLSModuleRoot        = $PSScriptRoot
 
 # Thread-safe collections for module state

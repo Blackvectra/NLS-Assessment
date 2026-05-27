@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.6.6 (2026-05-27) — fresh-install hotfix
+
+Two latent bugs surfaced when an operator unboxed v4.6.5 from a fresh GitHub zip on a Windows workstation without MicrosoftTeams installed.
+
+### Fixed
+
+- **`New-Item -LiteralPath ... -ItemType Directory` doesn't work** — `-LiteralPath` is not in `New-Item`'s parameter set even on PS 7. Five sites switched to `[void][System.IO.Directory]::CreateDirectory($path)`:
+  - `Invoke-NLSAssessment.ps1`, `Invoke-NLSBatchAssessment.ps1`, `Apply-NLSBaseline.ps1`, `Build/New-NLSCodeSigningCert.ps1`, `tools/Generate-SBOM.ps1`
+- **`MicrosoftTeams` demoted from `RequiredModules` to soft dependency.** Module no longer fails to load on workstations without Teams. `Connect-NLSServices` already handles on-demand load.
+
 ## v4.6.5 (2026-05-27)
 
 Patch release closing the correctness sweep defined in `docs/CORRECTNESS-SWEEP-v4.6.5.md`. No new features. Every defect surfaced by three real-tenant runs and a follow-on code-review audit is either Resolved here or explicitly tracked Open.
