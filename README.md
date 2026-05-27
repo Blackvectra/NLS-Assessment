@@ -21,7 +21,7 @@ On a fresh machine, run this once:
 
 ```powershell
 # After extracting the zip
-cd C:\path\to\NLS-Assessment-v4.6.4
+cd C:\path\to\NLS-Assessment-v4.6.5
 .\Install-NLSPrerequisites.ps1
 ```
 
@@ -218,4 +218,4 @@ Internal use — NextLayerSec. Not licensed for redistribution.
 
 ---
 
-*NLS-Assessment v4.6.4 · 195 controls · 220 exported functions · 100 Pester tests*
+*NLS-Assessment v4.6.5 · 195 controls · 220 exported functions · 100 Pester tests*
