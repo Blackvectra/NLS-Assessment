@@ -20,6 +20,13 @@ Patch release closing the correctness sweep defined in `docs/CORRECTNESS-SWEEP-v
 - **Sample HTML sanitization.** `sample-report/example-assessment.html` had 7 occurrences of real personal domain `mattlevorson.com` (secondary domain on the source tenant) and 2 admin display names rendered as `NextLayerSec` (collision from `Matthew Levorson → NextLayerSec` sanitization). Replaced with `example2.com` / `Admin 2` / `Admin 3`.
 - **Branding/PII leaks** in initial NLS port surfaced and fixed: NRG phone number in `branding.psd1`, "North Dakota" geographic identifier in CLAUDE.md, real client names NDACo / Dunn County in sample configs.
 
+### Release engineering
+
+- **In-house signing scaffolding (soft mode, $0 cost).** New `Build/New-NLSCodeSigningCert.ps1` generates a self-signed Authenticode cert on the operator workstation, installs it into `TrustedPublisher` + `Root`, and stashes the thumbprint at `~/.nls-assessment/signing-thumbprint.txt`. `Build/Sign-Release.ps1` treats self-signed as first-class for in-house use. Upgrade path to a paid cert is one parameter.
+- **`Apply-NLSBaseline.ps1 -RequireSignedCode`** (new switch, default `$false`). Soft warning by default; hard refusal when set. Future v5.0 may flip the default.
+- **`Lib/Test-NLSSignatureStatus.ps1`** (new exported function). Wraps `Get-AuthenticodeSignature` with friendlier status mapping and self-signed chain resolution.
+- **`RELEASE-CHECKLIST.md`** (new). Codifies the per-release contract: pre-release OWASP delta walk, code-review pass, adversarial fixtures, real-tenant run; release-time signing + integrity-manifest generation; post-release SBOM + smoke test.
+
 ### Documentation
 
 - New `docs/CORRECTNESS-SWEEP-v4.6.5.md` — prioritization rule, 24 Resolved entries with root cause and PR refs, 7 Open entries for follow-up, 3 misclassification entries deferred to v4.7, Definition of Done.

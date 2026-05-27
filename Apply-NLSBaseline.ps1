@@ -3,7 +3,7 @@
 # Apply-NLSBaseline.ps1  (v4.6.3)
 # Interactive WRITE-MODE deployment tool for NLS-Assessment remediations.
 #
-# NextLayerSec
+# NextLayerSec | NextLayerSec LLC
 # Author: NextLayerSec
 #
 # ============================================================================
@@ -67,7 +67,23 @@ param(
     [switch] $Force,
 
     # Alias for -WhatIf with verbose markdown preview output.
-    [switch] $DryRun
+    [switch] $DryRun,
+
+    # Enforce Authenticode signatures on every Apply-NLS*.ps1 file before
+    # any of them runs. Default: $false — emit Write-Warning per unsigned
+    # script and continue. Strict mode ($true): refuse to dispatch if any
+    # Apply-NLS* file has Status != 'Valid' (NotSigned, HashMismatch,
+    # UntrustedRoot, Expired, Error all block).
+    #
+    # The default is soft so the v4.6.5 transition doesn't break existing
+    # operators who haven't generated or trusted a code-signing cert yet.
+    # Once Build/Sign-Release.ps1 has run with an in-house self-signed cert
+    # (Build/New-NLSCodeSigningCert.ps1 creates one), flipping this on
+    # gives you tamper detection on every apply run.
+    #
+    # Future default: $true once a release pipeline reliably ships signed
+    # artifacts. Track via the v4.6.x polish roadmap.
+    [switch] $RequireSignedCode
 )
 
 # OWASP ASVS V16.4.1 — strict mode at the entry point. Write-mode tool runs
@@ -105,7 +121,7 @@ try {
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Red
 Write-Host " NLS-Assessment v$applyVersion — Apply-NLSBaseline (WRITE MODE)" -ForegroundColor Red
-Write-Host " NextLayerSec"                   -ForegroundColor Red
+Write-Host " NextLayerSec | NextLayerSec LLC"                   -ForegroundColor Red
 Write-Host "================================================================" -ForegroundColor Red
 if ($WhatIfPreference) {
     Write-Host " MODE: WhatIf / DryRun — NO changes will be made"          -ForegroundColor Yellow
@@ -152,6 +168,38 @@ if (-not (Test-Path -LiteralPath $applyDir)) {
 $resolvedApplyDir = [System.IO.Path]::GetFullPath($applyDir)
 $applyScripts = @(Get-ChildItem -LiteralPath $applyDir -Filter 'Apply-NLS*.ps1' -File -ErrorAction Stop)
 Write-Host "[-] Loading $($applyScripts.Count) apply function(s)..." -ForegroundColor Cyan
+
+# Authenticode signature preflight. Soft by default (warns and continues),
+# hard when -RequireSignedCode was passed (refuses to dispatch). Test-NLS-
+# SignatureStatus was loaded by the NLS-Assessment module import above and
+# distinguishes NotSigned / HashMismatch / UntrustedRoot / Expired so the
+# warning text is useful instead of "Signature: Invalid."
+if (Get-Command Test-NLSSignatureStatus -ErrorAction SilentlyContinue) {
+    $sigResults = foreach ($s in $applyScripts) {
+        Test-NLSSignatureStatus -Path $s.FullName
+    }
+    $unsigned = @($sigResults | Where-Object { $_.Status -ne 'Valid' -and $_.Status -ne 'Unsupported' })
+    if ($unsigned.Count -gt 0) {
+        if ($RequireSignedCode) {
+            Write-Host '' -ForegroundColor Red
+            Write-Host '  [X] Signature check FAILED — -RequireSignedCode is set' -ForegroundColor Red
+            foreach ($u in $unsigned) {
+                Write-Host "      $($u.Path): $($u.Status) — $($u.StatusMessage)" -ForegroundColor Red
+            }
+            throw "Refusing to dispatch $($unsigned.Count) unsigned/invalid Apply-NLS*.ps1 file(s). Sign with Build/Sign-Release.ps1 or drop -RequireSignedCode to run in soft-warning mode."
+        } else {
+            foreach ($u in $unsigned) {
+                Write-Warning "Unsigned/invalid Apply script: $([System.IO.Path]::GetFileName($u.Path)) — $($u.Status). Pass -RequireSignedCode to refuse dispatch on this state. (To sign: Build/New-NLSCodeSigningCert.ps1 -SaveThumbprintForBuild ; Build/Sign-Release.ps1)"
+            }
+        }
+    } else {
+        $signedCount = @($sigResults | Where-Object Status -eq 'Valid').Count
+        if ($signedCount -gt 0) {
+            Write-Host "  [+] All $signedCount Apply-NLS*.ps1 files have valid Authenticode signatures" -ForegroundColor Green
+        }
+    }
+}
+
 $loadedCount = 0
 foreach ($s in $applyScripts) {
     $resolvedFile = [System.IO.Path]::GetFullPath($s.FullName)

@@ -46,6 +46,7 @@
         'Test-NLSLicenseRequirementMet',
         'Get-NLSSafeProperty',
         'Get-NLSNestedProperty',
+        'Test-NLSSignatureStatus',
 
         # ── Collectors — AAD ──────────────────────────────────────────────────
         'Invoke-NLSCollectAADAuthPolicies',
