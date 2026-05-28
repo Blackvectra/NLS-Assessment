@@ -82,11 +82,17 @@ See `docs/security/THREAT-MODEL.md` for the full threat model including:
 
 This is an internal tool for NextLayerSec. Report security issues to:
 
-**NextLayerSec**  
-Security Engineer — NextLayerSec  
+**NextLayerSec**
+Security Engineer — NextLayerSec
 GitHub: @Blackvectra
 
-Do not open public GitHub issues for security vulnerabilities.
+Do not open public GitHub issues for security vulnerabilities. For GitHub-native private disclosure, use the repository's "Report a vulnerability" tab (Settings → Code security → Private vulnerability reporting).
+
+---
+
+## Incident Response
+
+If you suspect a credential leak, malicious dependency, signed-release tamper, or active tenant compromise observed during an assessment, follow [docs/INCIDENT-RESPONSE.md](docs/INCIDENT-RESPONSE.md) — a per-scenario runbook covering containment, eradication, and customer notification timelines.
 
 ---
 
