@@ -1,0 +1,62 @@
+# CodeQL Advanced — code scanning for this repo.
+#
+# Scope: this is a PowerShell repo. CodeQL does NOT natively support
+# PowerShell (the supported set is c-cpp, csharp, go, java-kotlin,
+# javascript-typescript, python, ruby, rust, swift, actions). We therefore
+# scan only `actions` here, which analyses the GitHub-Actions workflow
+# YAML for supply-chain weaknesses (untrusted command injection in
+# `run:` blocks, untrusted action versions, etc.).
+#
+# PowerShell source code is scanned in the regular CI workflow via
+# PSScriptAnalyzer with SARIF upload to the same Code Scanning UI — see
+# `.github/workflows/ci.yml` for that integration.
+
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '23 13 * * 2'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # required to publish results to Code Scanning
+      security-events: write
+      # required to fetch internal or private CodeQL packs
+      packages: read
+      # required for reading the repo
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # Enable the broader security query packs for thorough scanning of
+          # the action-workflow YAML. `security-extended` adds higher-recall
+          # security queries; `security-and-quality` adds maintainability
+          # queries on top of that.
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
