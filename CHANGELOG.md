@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## v4.9.0 (2026-05-29) — local web GUI
 
-### Added — local web GUI (preview)
+### Added — local web GUI
 
 New `-Web` flag on `Invoke-NLSAssessment.ps1` launches a local Pode-backed web server (loopback only, `127.0.0.1:8765` by default) and opens the operator's browser to a single-page GUI. The GUI is a thin shell over the existing module:
 

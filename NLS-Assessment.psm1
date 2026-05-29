@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 #
-# NLS-Assessment.psm1  (v4.6.7)
+# NLS-Assessment.psm1  (v4.9.0)
 # Module loader — dot-sources all functions from Lib, Collectors, Evaluators, Publishers.
 #
 # Author: NextLayerSec — nextlayersec.io
@@ -32,7 +32,7 @@ $ErrorActionPreference = 'Stop'
 # directive in production code going forward.
 Set-StrictMode -Version Latest
 
-$script:NLSAssessmentVersion = '4.6.7'
+$script:NLSAssessmentVersion = '4.9.0'
 $script:NLSModuleRoot        = $PSScriptRoot
 
 # Thread-safe collections for module state
