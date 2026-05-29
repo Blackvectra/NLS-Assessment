@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 #
-# NLS-Assessment.psm1  (v4.5.5)
+# NLS-Assessment.psm1  (v4.6.7)
 # Module loader — dot-sources all functions from Lib, Collectors, Evaluators, Publishers.
 #
 # Author: NextLayerSec — nextlayersec.io
@@ -125,6 +125,7 @@ $script:ExportedFunctions = @(
     'Set-NLSRawData', 'Get-NLSRawData',
     'Connect-NLSServices', 'Disconnect-NLSServices',
     'ConvertTo-NLSHtmlSafe', 'ConvertTo-NLSSafeUrl',
+    'Start-NLSWebServer',
     'Get-NLSControlDefinitions', 'Get-NLSControlById',
     'Get-NLSFrameworkCitations', 'Get-NLSFrameworkDefinitions',
     'Get-NLSFindingRiskCost', 'Get-NLSAggregateRisk',

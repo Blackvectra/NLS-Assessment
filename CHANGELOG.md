@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added — local web GUI (preview)
+
+New `-Web` flag on `Invoke-NLSAssessment.ps1` launches a local Pode-backed web server (loopback only, `127.0.0.1:8765` by default) and opens the operator's browser to a single-page GUI. The GUI is a thin shell over the existing module:
+
+- **Tenant list** is read from `Config/clients.json`; ad-hoc domains can be entered directly.
+- **Click a tenant** → confirm prompt → kicks off `Invoke-NLSAssessment.ps1` as a child job. The operator authorizes Microsoft Graph / EXO in the child's auth-popup browser window the same way they would for a CLI run.
+- **Live progress** — the server polls the child job's stdout and the GUI updates a progress bar and log tail every second.
+- **History** sidebar lists prior runs from `./output/` (per-tenant subfolders, latest first).
+- **View report inline** — clicking a run loads the existing CSP-hardened `<tenant>-assessment.html` into a sandboxed iframe (`sandbox="allow-same-origin"`); the report's own strict CSP still applies inside the frame.
+
+Files added:
+
+- `Lib/Start-NLSWebServer.ps1` (303 lines) — server entry point + 5 routes.
+- `Web/index.html`, `Web/static/app.css`, `Web/static/app.js` — vanilla HTML/CSS/JS; no framework, no bundler, CSP-friendly (all DOM wiring via `addEventListener`, no inline handlers).
+
+Security posture:
+
+- Server binds to `127.0.0.1` only — never `0.0.0.0`, never exposed to the network.
+- Server-side CSP on every response: `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'`. Same shape as the report publisher.
+- Path-traversal guards on both `:tenant` and `:id` route parameters; domain regex on scan-trigger.
+- No `Invoke-Expression`, no `[scriptblock]::Create`, no eval anywhere.
+- Pode is loaded as a **soft dependency** (not in `RequiredModules`) so CLI users aren't affected. The flag emits a clear one-line install instruction if Pode isn't present.
+
+Prerequisites for `-Web`:
+
+- `Install-Module Pode -MinimumVersion 2.10.0 -Scope CurrentUser` (one-time, free, MIT).
+
+Module exports updated in both `NLS-Assessment.psd1` `FunctionsToExport` and `NLS-Assessment.psm1` `$script:ExportedFunctions` to include `Start-NLSWebServer`.
+
 ## v4.6.7 (2026-05-27) — polished release
 
 Polish-and-correctness bundle covering everything surfaced by the v4.6.6 review of the frontierprecision.com run. Lockstep with NRG v4.6.7.
@@ -49,6 +80,31 @@ Polish-and-correctness bundle covering everything surfaced by the v4.6.6 review 
 - **Retry-loop sleep on the final iteration is skipped.** Previously, on a full-failure path CI hung an extra 8s before throwing. The retry now sleeps only between attempts, not after the last one.
 
 - **Removed unverified "ubuntu-latest ships [Pester/PSScriptAnalyzer] in the toolcache" comment** from the workflow — it isn't a load-bearing claim and the fast-path is still a correct no-op when the runner image doesn't preinstall the module.
+
+### Added — GitHub repository security surface
+
+The v4.6.7 line also brought the repo's GitHub-side security posture up to match the in-code hardening. None of this changes module code (ModuleVersion stays 4.6.7); it is repository / CI / documentation infrastructure.
+
+- **`.github/dependabot.yml`** — `github-actions` ecosystem, weekly, grouped into one PR. (PowerShell modules from PSGallery aren't a Dependabot-supported ecosystem; runtime module versions stay pinned in the manifest.)
+- **`.github/workflows/codeql.yml`** — CodeQL Advanced scanning the Actions workflow YAML for supply-chain weaknesses (`security-extended` + `security-and-quality`).
+- **`.github/workflows/ci.yml`** — PSScriptAnalyzer job now emits SARIF and uploads to Code Scanning (`category=psscriptanalyzer`). SARIF `startLine`/`startColumn` clamped to ≥1 (PSScriptAnalyzer emits 0 for whole-file rules, which SARIF 2.1.0 rejects); relative paths via `GetRelativePath`.
+- **`.github/workflows/dependency-review.yml`** — blocks PRs introducing moderate-or-higher CVEs. (License allow-list dropped — GitHub's dependency graph doesn't populate SPDX licenses for most action repos, so an allow-list false-fails first-party actions.)
+- **`.github/workflows/scorecard.yml`** — OSSF Scorecard weekly + on push; `ossf/scorecard-action` SHA-pinned per the supply-chain rule CodeQL enforces.
+- **`.github/workflows/secret-scan.yml`** — Gitleaks + TruffleHog on push/PR and a weekly full-history sweep. Both third-party actions SHA-pinned. Isolated from `ci.yml` so a scanner hiccup can't block the core gates.
+- **`.github/workflows/release.yml`** — on `v*` tags: CycloneDX SBOM from `tools/Generate-SBOM.ps1`, plus a windows-latest Authenticode + integrity-manifest verification (fails on tamper, tolerates unsigned in-house builds).
+
+### Added — documentation
+
+- **`docs/INCIDENT-RESPONSE.md`** — per-scenario runbook (GitHub credential leak, M365 enterprise-app secret leak, malicious dependency / compromised action, signing-cert compromise, active tenant compromise during an assessment). Referenced from `SECURITY.md`.
+- **`docs/ROADMAP-v4.9.0.md`** — consolidates the former v4.7 (analytics) and v4.8 (IG scoping / attestation / portfolio / Maester) roadmaps into one coordinated release; `ROADMAP-v4.7.md` and `ROADMAP-v4.8.md` marked SUPERSEDED.
+
+### Fixed — documentation accuracy
+
+A documentation-drift audit caught several stale claims, now corrected:
+
+- **`SECURITY.md` CI/CD section rewritten to match reality.** It previously listed Gitleaks, TruffleHog, CycloneDX SBOM, and an Authenticode catalog check as running CI steps when no workflow implemented them, and omitted the CodeQL / Scorecard / Dependency Review / Dependabot steps that *do* run. The four claimed-but-missing steps are now actually implemented (above), and the section names the workflow file behind each step so it can be verified against `.github/workflows/`.
+- **Version strings reconciled to 4.6.7** in the `NLS-Assessment.psm1` header banner, `CLAUDE.md`, and the `SECURITY.md` footer (all had lagged at 4.5.5 / 4.6.5 while the manifest and `$script:NLSAssessmentVersion` were already 4.6.7).
+- **`SECURITY.md` "35 production files"** claim replaced with a count-free phrasing to stop the number drifting out of sync.
 
 ## v4.6.6.1 (2026-05-27) — HTML report CSP hotfix
 

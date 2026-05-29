@@ -75,7 +75,18 @@ param(
     })]
     [string[]] $DnsDomains,
     [switch] $JsonOnly,
-    [switch] $WhatIfConnections
+    [switch] $WhatIfConnections,
+
+    # Launch the local web GUI instead of running a scan in the terminal.
+    # The GUI is a local Pode-backed server (loopback only, never exposed
+    # to the network) that lets the operator pick a tenant, trigger scans,
+    # watch progress, and view reports in a browser. See Lib/Start-NLSWebServer.ps1
+    # and Web/. No tenant data leaves the workstation.
+    [switch] $Web,
+
+    # Port for the -Web GUI loopback server. Default avoids common collisions.
+    [ValidateRange(1024, 65535)]
+    [int] $WebPort = 8765
 )
 
 # OWASP ASVS V16.4.1 — strict mode at the entry point so the orchestrator
@@ -151,6 +162,15 @@ try {
 } catch {
     Write-Host "  [!] Module load failed: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
+}
+
+# -Web short-circuits the terminal flow: hand control to the local Pode-backed
+# web GUI, which handles tenant selection, scan triggering, progress display,
+# and report viewing in a browser. The server binds to 127.0.0.1 only —
+# never exposed to the network — and exits cleanly on Ctrl+C.
+if ($Web) {
+    Start-NLSWebServer -Port $WebPort -ScriptDir $scriptDir
+    exit 0
 }
 
 Clear-NLSFindings
