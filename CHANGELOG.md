@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added — local web GUI (preview)
+
+New `-Web` flag on `Invoke-NLSAssessment.ps1` launches a local Pode-backed web server (loopback only, `127.0.0.1:8765` by default) and opens the operator's browser to a single-page GUI. The GUI is a thin shell over the existing module:
+
+- **Tenant list** is read from `Config/clients.json`; ad-hoc domains can be entered directly.
+- **Click a tenant** → confirm prompt → kicks off `Invoke-NLSAssessment.ps1` as a child job. The operator authorizes Microsoft Graph / EXO in the child's auth-popup browser window the same way they would for a CLI run.
+- **Live progress** — the server polls the child job's stdout and the GUI updates a progress bar and log tail every second.
+- **History** sidebar lists prior runs from `./output/` (per-tenant subfolders, latest first).
+- **View report inline** — clicking a run loads the existing CSP-hardened `<tenant>-assessment.html` into a sandboxed iframe (`sandbox="allow-same-origin"`); the report's own strict CSP still applies inside the frame.
+
+Files added:
+
+- `Lib/Start-NLSWebServer.ps1` (303 lines) — server entry point + 5 routes.
+- `Web/index.html`, `Web/static/app.css`, `Web/static/app.js` — vanilla HTML/CSS/JS; no framework, no bundler, CSP-friendly (all DOM wiring via `addEventListener`, no inline handlers).
+
+Security posture:
+
+- Server binds to `127.0.0.1` only — never `0.0.0.0`, never exposed to the network.
+- Server-side CSP on every response: `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'`. Same shape as the report publisher.
+- Path-traversal guards on both `:tenant` and `:id` route parameters; domain regex on scan-trigger.
+- No `Invoke-Expression`, no `[scriptblock]::Create`, no eval anywhere.
+- Pode is loaded as a **soft dependency** (not in `RequiredModules`) so CLI users aren't affected. The flag emits a clear one-line install instruction if Pode isn't present.
+
+Prerequisites for `-Web`:
+
+- `Install-Module Pode -MinimumVersion 2.10.0 -Scope CurrentUser` (one-time, free, MIT).
+
+Module exports updated in both `NLS-Assessment.psd1` `FunctionsToExport` and `NLS-Assessment.psm1` `$script:ExportedFunctions` to include `Start-NLSWebServer`.
+
 ## v4.6.7 (2026-05-27) — polished release
 
 Polish-and-correctness bundle covering everything surfaced by the v4.6.6 review of the frontierprecision.com run. Lockstep with NRG v4.6.7.

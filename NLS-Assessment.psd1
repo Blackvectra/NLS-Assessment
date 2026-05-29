@@ -34,6 +34,7 @@
         'Disconnect-NLSServices',
         'ConvertTo-NLSHtmlSafe',
         'ConvertTo-NLSSafeUrl',
+        'Start-NLSWebServer',
         'Get-NLSControlDefinitions',
         'Get-NLSControlById',
         'Get-NLSFindingRiskCost',

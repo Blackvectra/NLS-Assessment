@@ -125,6 +125,7 @@ $script:ExportedFunctions = @(
     'Set-NLSRawData', 'Get-NLSRawData',
     'Connect-NLSServices', 'Disconnect-NLSServices',
     'ConvertTo-NLSHtmlSafe', 'ConvertTo-NLSSafeUrl',
+    'Start-NLSWebServer',
     'Get-NLSControlDefinitions', 'Get-NLSControlById',
     'Get-NLSFrameworkCitations', 'Get-NLSFrameworkDefinitions',
     'Get-NLSFindingRiskCost', 'Get-NLSAggregateRisk',
