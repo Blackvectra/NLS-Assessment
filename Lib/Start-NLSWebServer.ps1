@@ -161,27 +161,37 @@ function Start-NLSWebServer {
                 Write-PodeJsonResponse -Value @()
                 return
             }
-            $runs = @()
+            # Collect raw FileInfo + tenant first so we can sort by the real
+            # DateTime, not the formatted display string. Sorting the formatted
+            # string via `[datetime]$_.timestamp` uses CurrentCulture parsing,
+            # which throws on non-en-US locales for the 'yyyy-MM-dd HH:mm:ss'
+            # format we emit.
+            $entries = @()
             foreach ($tenantDir in Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue) {
                 foreach ($json in Get-ChildItem -LiteralPath $tenantDir.FullName -File -Filter '*-results.json' -ErrorAction SilentlyContinue) {
-                    # Derive the matching .html sibling: strip `-results.json`
-                    # and append `-assessment.html`. If that exact filename
-                    # doesn't exist, look for any -assessment.html that begins
-                    # with the same base.
-                    $base = $json.BaseName -replace '-results$', ''
-                    $htmlCandidate = Join-Path $tenantDir.FullName ($base + '-assessment.html')
-                    $hasHtml = Test-Path -LiteralPath $htmlCandidate
-                    $runs += [ordered]@{
-                        id        = $base
-                        tenant    = $tenantDir.Name
-                        timestamp = $json.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
-                        sizeKb    = [int]($json.Length / 1KB)
-                        hasReport = $hasHtml
+                    $entries += [pscustomobject]@{
+                        File   = $json
+                        Tenant = $tenantDir.Name
                     }
                 }
             }
-            $runs = $runs | Sort-Object { [datetime]$_.timestamp } -Descending
-            Write-PodeJsonResponse -Value $runs
+            $entries = @($entries | Sort-Object { $_.File.LastWriteTime } -Descending)
+
+            $runs = foreach ($e in $entries) {
+                $json = $e.File
+                # Derive the matching .html sibling: strip `-results.json` and
+                # append `-assessment.html`.
+                $base          = $json.BaseName -replace '-results$', ''
+                $htmlCandidate = Join-Path $json.Directory.FullName ($base + '-assessment.html')
+                [ordered]@{
+                    id        = $base
+                    tenant    = $e.Tenant
+                    timestamp = $json.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
+                    sizeKb    = [int]($json.Length / 1KB)
+                    hasReport = Test-Path -LiteralPath $htmlCandidate
+                }
+            }
+            Write-PodeJsonResponse -Value @($runs)
         }
 
         # GET /api/runs/:tenant/:id/report — return the HTML report so the

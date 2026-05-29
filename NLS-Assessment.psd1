@@ -1,6 +1,6 @@
 @{
     # Module identity
-    ModuleVersion     = '4.6.7'
+    ModuleVersion     = '4.9.0'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'NextLayerSec'
     CompanyName       = 'NextLayerSec'

@@ -110,4 +110,4 @@ If you suspect a credential leak, malicious dependency, signed-release tamper, o
 
 ---
 
-*NLS-Assessment v4.6.7 · Hardened against OWASP Top 10:2025, ASVS v5, CVE-2025-54100*
+*NLS-Assessment v4.9.0 · Hardened against OWASP Top 10:2025, ASVS v5, CVE-2025-54100*

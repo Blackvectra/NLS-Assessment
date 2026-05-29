@@ -75,6 +75,29 @@ cd NLS-Assessment-Tool
 .\Invoke-NLSBatchAssessment.ps1 -WhatIf
 ```
 
+### Local Web GUI
+
+For operators who prefer clicking over typing, `-Web` boots a local browser
+GUI instead of the terminal flow. The GUI is a Pode-backed loopback server
+on `127.0.0.1:8765`; it never exposes itself to the network and never sends
+tenant data anywhere. Pick a tenant, click "Run scan", watch progress live,
+and view the existing HTML report inline.
+
+```powershell
+# One-time install (free, MIT-licensed PSGallery module)
+Install-Module Pode -MinimumVersion 2.10.0 -Scope CurrentUser
+
+# Launch the GUI (auto-opens your default browser)
+.\Invoke-NLSAssessment.ps1 -Web
+
+# Use a different port if 8765 is taken
+.\Invoke-NLSAssessment.ps1 -Web -WebPort 9000
+```
+
+The GUI consumes the same `Config/clients.json` as the CLI, scans run via the
+same module functions, and reports land in the same `./output/` directory —
+so CLI and GUI workflows can be mixed freely.
+
 ---
 
 ## Architecture
