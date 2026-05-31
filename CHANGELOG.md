@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added — automation features: Maturity tier, threshold exit codes, Quick scan
+
+Four operator-facing features for CI/automation pipelines and quick triage:
+
+- **`Lib/Get-NLSMaturityTier.ps1`** (new, roadmap F1) — derives a 1–5 tier (Initial / Developing / Defined / Managed / Optimizing) from the final findings stream. Tier rules combine score % and absolute Critical/High gap counts so the badge can never disagree with the score ring. Embedded in `$reportMetadata.Maturity` so every publisher (HTML, JSON, Markdown, Playbook, Delta) sees the same classification. Score formula matches the existing HTML publisher: `round(100 * (Satisfied + 0.5*Partial) / ScoredControls)`.
+- **`-Quick` switch** on `Invoke-NLSAssessment.ps1` — filters the evaluator set to only those that score Critical + High controls. Same collectors run; only the scoring pass is short-circuited. Useful for "give me a 60-second triage" runs. Metadata now records `QuickScan = $true` so downstream consumers can flag that the report intentionally skipped Medium / Low.
+- **`-FailOnCritical N`, `-FailOnHigh N`, `-FailOnScoreBelow N`** — opt-in threshold exit codes (default 0 = disabled). Distinct exit-code range (10/11/12) so CI callers can disambiguate "no findings" (code 2) from "too many Critical gaps" (code 10). First-match wins, most severe signal lands.
+- **`-BaselineResults <path>`** — already implemented (`Publishers/Publish-NLSDeltaReport.ps1`, 473 lines covering score delta, finding regressions, CA drift, role drift, OAuth drift, DMARC drift). Now surfaced in README so operators discover it.
+
+New Pester suite `Testing/NLS.MaturityTier.Tests.ps1` pins all five tier transitions, the half-credit Partial scoring, NotApplicable exclusion, and the output-shape contract.
+
 ### Added — HIPAA / SOC 2 / PCI DSS / ISO 27001 citations to every control
 
 A framework-coverage audit found that only 33 of 195 controls had a HIPAA citation, 41 had SOC 2, 17 had PCI DSS, and 72 had ISO 27001 — and 10 of the 33 HIPAA mappings were on the wrong Security Rule subpart (e.g., mailbox audit logging was cited as §164.312(e)(2) Integrity when it should be §164.312(b) Audit Controls).

@@ -133,6 +133,7 @@ $script:ExportedFunctions = @(
     'Get-NLSTenantLicenseProfile', 'Test-NLSLicenseRequirementMet',
     'Get-NLSSafeProperty', 'Get-NLSNestedProperty',
     'Test-NLSSignatureStatus',
+    'Get-NLSMaturityTier',
 
     # ── Collectors — AAD ──────────────────────────────────────────────────────
     'Invoke-NLSCollectAADAuthPolicies', 'Invoke-NLSCollectAADCAPolicies',
