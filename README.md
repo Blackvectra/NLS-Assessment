@@ -241,4 +241,4 @@ Internal use — NextLayerSec. Not licensed for redistribution.
 
 ---
 
-*NLS-Assessment v4.6.5 · 195 controls · 220 exported functions · 100 Pester tests*
+*NLS-Assessment v4.9.0 · 195 controls · 227 exported functions · 129 Pester tests*
