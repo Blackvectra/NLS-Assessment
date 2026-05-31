@@ -263,16 +263,18 @@ function Test-NLSLicenseRequirementMet {
         publisher labels the gap as license-gated rather than silently
         suppressing a real upgrade need.
 
-        (Aliased as -Profile for backwards compatibility with v4.6.x
-        callers; the parameter was renamed in v4.9.x to avoid shadowing
-        PowerShell's built-in $Profile automatic variable, which
-        PSScriptAnalyzer flags via PSAvoidAssignmentToAutomaticVariable.)
+        Renamed from -Profile in v4.9.x to avoid shadowing PowerShell's
+        built-in $Profile automatic variable, which PSScriptAnalyzer
+        flags via PSAvoidAssignmentToAutomaticVariable. No alias is
+        kept because the runner's older PSA still trips on the alias
+        name itself; the only callers are internal tests, which have
+        been migrated in lockstep.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
     param(
         [Parameter()] [AllowNull()] [AllowEmptyString()] [string] $LicenseRequirement,
-        [Parameter()] [AllowNull()] [Alias('Profile')] [object] $LicenseProfile
+        [Parameter()] [AllowNull()] [object] $LicenseProfile
     )
 
     if ([string]::IsNullOrEmpty($LicenseRequirement)) { return $true }
