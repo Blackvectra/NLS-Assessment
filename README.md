@@ -5,6 +5,13 @@
 Built by NextLayerSec — nextlayersec.io  
 GitHub: [Blackvectra/NLS-Assessment](https://github.com/Blackvectra/NLS-Assessment)
 
+[![OpenSSF Best Practices](https://img.shields.io/badge/OpenSSF_Best_Practices-Passing_(self--assessed)-blue)](docs/OPENSSF-BEST-PRACTICES.md)
+[![SSDF](https://img.shields.io/badge/NIST_SP_800--218-self--attested-green)](docs/SECURE-DEVELOPMENT.md)
+[![CISA BOD 20-01](https://img.shields.io/badge/Vulnerability_Disclosure-CISA_BOD_20--01-orange)](docs/VULNERABILITY-DISCLOSURE-POLICY.md)
+[![Security Policy](https://img.shields.io/badge/security-policy-red)](SECURITY.md)
+
+> **Security:** Report vulnerabilities privately via the [GitHub Security tab](https://github.com/Blackvectra/NLS-Assessment/security/advisories/new) or `security@nextlayersec.io`. We follow a 7-day Critical / 30-day High fix SLA; see [`SECURITY.md`](SECURITY.md) for the full policy.
+
 ---
 
 ## What It Does

@@ -2,6 +2,13 @@
 
 This is internal NextLayerSec tooling. Contributions are managed by the NLS security engineering team.
 
+**Before opening a PR**, please review:
+
+- [`SECURITY.md`](SECURITY.md) — security policy, OWASP/ASVS controls, CI gates
+- [`docs/VULNERABILITY-DISCLOSURE-POLICY.md`](docs/VULNERABILITY-DISCLOSURE-POLICY.md) — if your change is a security fix, follow the coordinated-disclosure flow (private advisory) instead of a public PR
+- [`docs/SECURE-DEVELOPMENT.md`](docs/SECURE-DEVELOPMENT.md) — NIST SSDF practices we follow
+- [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) — checklist your PR description will need to fill out
+
 ---
 
 ## Adding a Control
@@ -63,4 +70,13 @@ feat: add AAD-2.5 phishing-resistant MFA evaluator
 fix: EXO-2.1 forwarding check fails on non-default policies
 docs: update mappings.md with CMMC 2.0 crosswalk
 refactor: move DNS collectors to Collectors/DNS/
+security: fix XSS in HTML publisher (CVE-YYYY-NNNNN)
 ```
+
+Use the `security:` prefix for any fix that closes a vulnerability — the `[Security]` tag in `CHANGELOG.md` mirrors this convention, and OpenSSF Best Practices criterion `release_notes_vulns` expects it.
+
+---
+
+## Reporting a security vulnerability
+
+**Do not open a public issue or PR** for a security vulnerability. Use the [private security advisory flow](https://github.com/Blackvectra/NLS-Assessment/security/advisories/new) or email `security@nextlayersec.io`. See [`SECURITY.md`](SECURITY.md) for the full coordinated-disclosure policy and SLA.
