@@ -37,6 +37,7 @@ function Get-NLSMaturityTier {
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
     param(
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
         [AllowEmptyCollection()]
         [object[]] $Findings
     )
@@ -62,10 +63,17 @@ function Get-NLSMaturityTier {
         return $null
     }
 
-    $sat = 0; $part = 0; $na = 0; $err = 0
+    # Counters tracked inside the loop so $null entries (which we explicitly
+    # skip) don't inflate the denominator — earlier $Findings.Count math
+    # included skipped nulls and silently deflated the score on dirty
+    # -FromResults baselines. $total is "findings actually classified",
+    # everything else is a partition of $total.
+    $total = 0
+    $sat = 0; $part = 0; $na = 0; $err = 0; $unknown = 0
     $crit = 0; $high = 0
     foreach ($f in $Findings) {
         if ($null -eq $f) { continue }
+        $total++
         $state    = Read-FindingField -Item $f -Key 'State'
         $severity = Read-FindingField -Item $f -Key 'Severity'
         switch ($state) {
@@ -77,10 +85,17 @@ function Get-NLSMaturityTier {
                 if ($severity -eq 'Critical') { $crit++ }
                 elseif ($severity -eq 'High') { $high++ }
             }
+            default {
+                # Unknown / future / typo'd State value. Don't silently
+                # absorb it into the denominator — that would let a typo
+                # like 'Satisifed' (no 'f') silently deflate the score.
+                # Track + surface via UnknownStates so the caller can warn.
+                $unknown++
+            }
         }
     }
 
-    $scored = $Findings.Count - $na - $err
+    $scored = $total - $na - $err - $unknown
     $score  = if ($scored -gt 0) { [Math]::Round(100 * ($sat + 0.5 * $part) / $scored) } else { 0 }
 
     $tier  = 1
@@ -112,6 +127,7 @@ function Get-NLSMaturityTier {
         HighGaps        = $high
         ScoredControls  = $scored
         ErrorFindings   = $err
+        UnknownStates   = $unknown
         Description     = $desc
     }
 }

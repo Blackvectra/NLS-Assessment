@@ -2,7 +2,23 @@
 
 ## Unreleased
 
-### Added — CISA / SSDF / OpenSSF security posture uplift
+## v4.10.0 (2026-05-31)
+
+**Release highlights:** new Maturity tier (roadmap F1), CI/automation threshold exit codes, Quick scan mode, CISA-aligned security program documentation (VDP, SSDF self-attestation, OpenSSF Best Practices self-assessment), and a substantial correctness/security hardening pass.
+
+### Fixed — pre-release security & correctness hardening pass
+
+Two independent code reviews of the v4.10.0 candidate (a recall-mode correctness pass and a security-focused pass) surfaced 7 actionable issues — all addressed in this release:
+
+- **`-FailOnCritical` / `-FailOnHigh` silently failed open when Maturity helper threw.** Both flags previously defaulted gap counts to 0 if `$reportMetadata['Maturity']` was unavailable, silently passing CI gates with the INOPERATIVE state visible only on `-FailOnScoreBelow`. Now all three threshold flags emit the same loud Warning and refuse to exit 0 silently.
+- **`-FailOn*` + `-FromResults` had no integrity warning.** A tampered baseline JSON could pass any CI gate. We already loudly reject `-Quick + -FromResults`; now the same warning fires for `-FailOn*`, surfacing the trust boundary in the CI log so a tampered baseline can't silently mislead the operator.
+- **`-FailOnScoreBelow` fired exit 12 on zero-findings runs** (derived score = 0 < threshold). A "no findings" run should exit 2, not be re-interpreted as a posture failure. Threshold block now short-circuits when `$findings.Count -eq 0`.
+- **Maturity score denominator over-counted `$null` entries.** `$Findings.Count - $na - $err` included `$null` items the loop skipped, deflating the score on dirty `-FromResults` baselines. Replaced with an inside-the-loop `$total` counter.
+- **`switch` on State had no default arm.** Typo'd / unknown State values (`'Satisifed'`, a future `'Pending'`, etc.) silently inflated the denominator with zero numerator contribution. Default arm now tracks `UnknownStates` in the result and excludes them from the denominator.
+- **Pester test for null-skip was vacuous.** Contained no `$null` entries — would have passed even if the null-skip guard was removed. Replaced with `[object[]]`-typed array literal that actually contains `$null` plus a regression assertion on `ScoredControls`. Also added `[AllowNull()]` to the `Findings` param so the binder accepts arrays with `$null` elements.
+- **Summary banner didn't show Error count.** Error-state findings (collector failures) were silently absorbed — banner Total disagreed with the sum of categories by the Error count. Now surfaced as a distinct row when `> 0`.
+
+### Added — automation features: Maturity tier, threshold exit codes, Quick scan
 
 Three-layer security-program documentation aligned to CISA's published expectations for federal-software vendors. Pure documentation + GitHub-config additions; no code or behavior changes.
 

@@ -137,7 +137,7 @@ Describe 'NLS-Assessment Maturity Tier Classification' {
         It 'Emits an ordered hashtable with all required keys' {
             $f = @(@{ State = 'Satisfied'; Severity = 'Medium' })
             $m = Get-NLSMaturityTier -Findings $f
-            $required = @('Tier','Label','Score','CriticalGaps','HighGaps','ScoredControls','Description')
+            $required = @('Tier','Label','Score','CriticalGaps','HighGaps','ScoredControls','ErrorFindings','UnknownStates','Description')
             foreach ($k in $required) {
                 $m.Contains($k) | Should -BeTrue -Because "key '$k' must exist"
             }
@@ -205,13 +205,41 @@ Describe 'NLS-Assessment Maturity Tier Classification' {
         }
 
         It 'Skips $null entries in the findings array without throwing' {
-            $f = @(
-                @{ State = 'Satisfied'; Severity = 'Medium' },
+            # The earlier version of this test contained no $null entries —
+            # it would have passed even if the null-skip guard had been
+            # deleted. This version uses a Where-Object workaround so the
+            # literal $null actually lands in the array under PS7 (a bare
+            # @($a, $null, $b) sometimes elides the null via parameter
+            # binding rules — wrapping with [object[]] is the canonical fix).
+            [object[]] $f = @(
                 @{ State = 'Satisfied'; Severity = 'Medium' }
+                $null
+                @{ State = 'Satisfied'; Severity = 'Medium' }
+                $null
+                @{ State = 'Gap';       Severity = 'Critical' }
             )
             { Get-NLSMaturityTier -Findings $f } | Should -Not -Throw
             $m = Get-NLSMaturityTier -Findings $f
-            $m.ScoredControls | Should -Be 2
+            # ScoredControls must reflect only the 3 non-null entries
+            # (the prior $Findings.Count math would have given 5, deflating
+            # the score by 40% silently on dirty -FromResults baselines).
+            $m.ScoredControls | Should -Be 3
+            $m.CriticalGaps   | Should -Be 1
+        }
+
+        It 'Excludes unknown State values from the denominator (typo-resistant)' {
+            # If a future evaluator emits State='Satisifed' (typo) it must
+            # NOT silently inflate the denominator the way the prior switch
+            # did. The default arm tracks Unknown via UnknownStates.
+            [object[]] $f = @(
+                @{ State = 'Satisfied';  Severity = 'Medium' }
+                @{ State = 'Satisifed';  Severity = 'Medium' }  # typo
+                @{ State = 'Pending';    Severity = 'Medium' }  # future state
+            )
+            $m = Get-NLSMaturityTier -Findings $f
+            $m.ScoredControls | Should -Be 1
+            $m.Score          | Should -Be 100
+            $m.UnknownStates  | Should -Be 2
         }
     }
 }
