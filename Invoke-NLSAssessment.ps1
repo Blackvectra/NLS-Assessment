@@ -706,11 +706,17 @@ if (-not $JsonOnly) {
 }
 
 # ── Summary ──────────────────────────────────────────────────────────────────
+# Error state is surfaced explicitly so an operator sees collector-failure
+# counts as a distinct bucket from Gap (a real posture issue) — previously
+# Error findings were silently absorbed and only Sat+Partial+Gap+NA were
+# printed, so on a tenant with 10 collector failures the displayed Total
+# could differ from the sum of categories by 10 with no explanation.
 $s = @{
     Satisfied = @($findings | Where-Object State -eq 'Satisfied').Count
     Partial   = @($findings | Where-Object State -eq 'Partial').Count
     Gap       = @($findings | Where-Object State -eq 'Gap').Count
     NA        = @($findings | Where-Object State -eq 'NotApplicable').Count
+    Error     = @($findings | Where-Object State -eq 'Error').Count
 }
 
 # Footer version + control count read at runtime so a stale hardcoded value
@@ -728,6 +734,9 @@ Write-Host "  Satisfied      $($s.Satisfied)"                                  -
 Write-Host "  Partial        $($s.Partial)"                                    -ForegroundColor Yellow
 Write-Host "  Gap            $($s.Gap)"                                        -ForegroundColor Red
 Write-Host "  Not Applicable $($s.NA)"                                         -ForegroundColor DarkGray
+if ($s.Error -gt 0) {
+    Write-Host "  Error          $($s.Error) (collector failures — excluded from score)" -ForegroundColor Magenta
+}
 Write-Host "  Total          $($findings.Count)"                               -ForegroundColor White
 Write-Host "  Output         $OutputPath"                                      -ForegroundColor White
 if ($reportMetadata.Contains('Maturity') -and $reportMetadata['Maturity']) {
@@ -752,31 +761,59 @@ Write-Host ""
 # bottom of this script gives fatal precedence over threshold, threshold
 # precedence over success.
 #
-# If the Maturity helper failed (-FailOnScoreBelow uses it), the threshold is
-# explicitly skipped with a warning rather than silently no-op'd. Operators
-# wiring a CI gate get a loud signal when the gate becomes inoperative.
+# Fail-closed when Maturity is unavailable: ALL three FailOn flags emit the
+# loud INOPERATIVE warning, not just FailOnScoreBelow. The earlier version
+# silently defaulted gap counts to 0 when $mat was null, which silently let
+# every FailOnCritical/FailOnHigh-gated tenant exit 0 if the Maturity helper
+# ever threw. CI operators must get a loud signal when their gate is
+# inoperative — silent fail-open is the worst possible failure mode for a
+# policy enforcement check.
+#
+# Zero-findings runs (collection failed, all evaluators returned nothing) also
+# skip the threshold check entirely — the run already exits 2 ("no findings"),
+# and a derived "score=0" should not be re-interpreted as a posture failure.
+# A baseline-tampered -FromResults with a "real" zero is still caught by the
+# -FromResults + -FailOn* combination warning below.
 if ($FailOnCritical -gt 0 -or $FailOnHigh -gt 0 -or $FailOnScoreBelow -gt 0) {
-    $mat = if ($reportMetadata.Contains('Maturity')) { $reportMetadata['Maturity'] } else { $null }
-    $critGaps = if ($mat) { [int]$mat.CriticalGaps } else { 0 }
-    $highGaps = if ($mat) { [int]$mat.HighGaps }     else { 0 }
 
-    if ($FailOnCritical -gt 0 -and $critGaps -ge $FailOnCritical) {
-        Write-Host "[!] Threshold breached: $critGaps Critical gaps (limit $FailOnCritical) — exiting 10" -ForegroundColor Red
-        $script:NLSThresholdExitCode = 10
+    # Warn loudly when -FromResults is combined with any -FailOn* — the gate
+    # then evaluates against a baseline FILE, not the live tenant. A baseline
+    # JSON with every State='Satisfied' would silently pass any CI gate. We
+    # already reject -Quick + -FromResults the same way upstream.
+    if ($skipCollection) {
+        Write-Warning "-FailOnCritical / -FailOnHigh / -FailOnScoreBelow combined with -FromResults: CI gate is evaluated against the baseline JSON, not the live tenant. If the baseline file has been modified, the gate's verdict reflects the file — not current posture. Re-run against the live tenant for an authoritative gate."
     }
-    elseif ($FailOnHigh -gt 0 -and $highGaps -ge $FailOnHigh) {
-        Write-Host "[!] Threshold breached: $highGaps High gaps (limit $FailOnHigh) — exiting 11" -ForegroundColor Red
-        $script:NLSThresholdExitCode = 11
+
+    $mat = if ($reportMetadata.Contains('Maturity')) { $reportMetadata['Maturity'] } else { $null }
+
+    if ($findings.Count -eq 0) {
+        Write-Warning "Threshold check skipped: 0 findings evaluated. The run will exit 2 ('no findings'); a zero-score derived from an empty findings stream would mislead a posture check."
     }
-    elseif ($FailOnScoreBelow -gt 0) {
-        if ($mat -and $mat.Contains('Score') -and $null -ne $mat.Score) {
-            $maturityScore = [int]$mat.Score
-            if ($maturityScore -lt $FailOnScoreBelow) {
-                Write-Host "[!] Threshold breached: score $maturityScore < $FailOnScoreBelow — exiting 12" -ForegroundColor Red
-                $script:NLSThresholdExitCode = 12
+    elseif (-not $mat) {
+        Write-Warning "Threshold check INOPERATIVE: Maturity classification unavailable, so CriticalGaps/HighGaps/Score cannot be read. Investigate the maturity warning above. The -FailOn* gate did NOT run for this assessment — do not treat a clean exit as policy compliance."
+    }
+    else {
+        $critGaps = [int]$mat.CriticalGaps
+        $highGaps = [int]$mat.HighGaps
+
+        if ($FailOnCritical -gt 0 -and $critGaps -ge $FailOnCritical) {
+            Write-Host "[!] Threshold breached: $critGaps Critical gaps (limit $FailOnCritical) — exiting 10" -ForegroundColor Red
+            $script:NLSThresholdExitCode = 10
+        }
+        elseif ($FailOnHigh -gt 0 -and $highGaps -ge $FailOnHigh) {
+            Write-Host "[!] Threshold breached: $highGaps High gaps (limit $FailOnHigh) — exiting 11" -ForegroundColor Red
+            $script:NLSThresholdExitCode = 11
+        }
+        elseif ($FailOnScoreBelow -gt 0) {
+            if ($mat.Contains('Score') -and $null -ne $mat.Score) {
+                $maturityScore = [int]$mat.Score
+                if ($maturityScore -lt $FailOnScoreBelow) {
+                    Write-Host "[!] Threshold breached: score $maturityScore < $FailOnScoreBelow — exiting 12" -ForegroundColor Red
+                    $script:NLSThresholdExitCode = 12
+                }
+            } else {
+                Write-Warning "-FailOnScoreBelow $FailOnScoreBelow is set but Maturity.Score is missing/null — skipping. CI gate is INOPERATIVE for this run."
             }
-        } else {
-            Write-Warning "-FailOnScoreBelow $FailOnScoreBelow is set but Maturity score is unavailable — skipping threshold check. Investigate the maturity warning above; the CI gate is INOPERATIVE for this run."
         }
     }
 }
