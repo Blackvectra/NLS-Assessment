@@ -707,16 +707,34 @@ if (-not $JsonOnly) {
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 # Error state is surfaced explicitly so an operator sees collector-failure
-# counts as a distinct bucket from Gap (a real posture issue) — previously
-# Error findings were silently absorbed and only Sat+Partial+Gap+NA were
-# printed, so on a tenant with 10 collector failures the displayed Total
-# could differ from the sum of categories by 10 with no explanation.
-$s = @{
-    Satisfied = @($findings | Where-Object State -eq 'Satisfied').Count
-    Partial   = @($findings | Where-Object State -eq 'Partial').Count
-    Gap       = @($findings | Where-Object State -eq 'Gap').Count
-    NA        = @($findings | Where-Object State -eq 'NotApplicable').Count
-    Error     = @($findings | Where-Object State -eq 'Error').Count
+# counts as a distinct bucket from Gap (a real posture issue).
+#
+# v4.10.1: counts now pulled from $reportMetadata['Maturity'] when available
+# (single source of truth with the maturity badge and CI thresholds). The
+# Maturity helper computed Sat/Partial/Gap/NA/Error in one pass at line 583;
+# re-deriving them here with 5x Where-Object was wasted work AND meant a
+# future change to the counter rule (e.g., excluding Error from Gap counts)
+# would silently split into two answers. Falls back to one canonical
+# Get-NLSCoverageScore call when Maturity is unavailable (helper threw, or
+# a -FromResults baseline pre-dating v4.10.1) — banner always renders.
+$s = if ($reportMetadata.Contains('Maturity') -and $reportMetadata['Maturity']) {
+    $m = $reportMetadata['Maturity']
+    @{
+        Satisfied = $m.Satisfied
+        Partial   = $m.Partial
+        Gap       = $m.Gap
+        NA        = $m.NotApplicable
+        Error     = $m.ErrorFindings
+    }
+} else {
+    $cov = Get-NLSCoverageScore -Findings $findings -ErrorHandling 'Gap'
+    @{
+        Satisfied = $cov.Satisfied
+        Partial   = $cov.Partial
+        Gap       = $cov.Gap
+        NA        = $cov.NA
+        Error     = $cov.Error
+    }
 }
 
 # Footer version + control count read at runtime so a stale hardcoded value

@@ -283,19 +283,25 @@ function Publish-NLSRemediationPlaybook {
     $sb.ToString() | Out-File -LiteralPath $OutputPath -Encoding utf8
 
     # ── EXECUTIVE SUMMARY ─────────────────────────────────────────────────────
-    $sat     = @($Findings | Where-Object State -eq 'Satisfied').Count
-    $partial = @($Findings | Where-Object State -eq 'Partial').Count
-    $gap     = @($Findings | Where-Object State -eq 'Gap').Count
-    $na      = @($Findings | Where-Object State -eq 'NotApplicable').Count
-    $total   = $Findings.Count
-    $scored  = $sat + $partial + $gap
-    $score   = if ($scored -gt 0) { [int](($sat + ($partial * 0.5)) / $scored * 100) } else { 0 }
-    $posture = switch ($true) {
-        { $score -ge 85 } { 'Strong' }
-        { $score -ge 65 } { 'Moderate' }
-        { $score -ge 40 } { 'At Risk' }
-        default            { 'Critical Risk' }
-    }
+    # v4.10.1: pulled from the canonical helper. -ErrorHandling Gap preserves
+    # the historical Playbook semantics (Error in the denominator).
+    $cov     = Get-NLSCoverageScore -Findings $Findings -ErrorHandling 'Gap'
+    $sat     = $cov.Satisfied
+    $partial = $cov.Partial
+    $gap     = $cov.Gap
+    $na      = $cov.NA
+    $total   = $cov.Total
+    $scored  = $cov.Scored
+    $score   = $cov.Score
+    # v4.10.1: rewritten from `switch ($true)` to if/elseif. Switch had the
+    # same fallthrough hazard the Summary publisher fixed earlier — all
+    # matching arms accumulate, so $posture was secretly an array (e.g.
+    # @('Strong','Moderate','At Risk') for any score >= 85). Visible bug
+    # in the executive markdown for any tenant scoring above 40.
+    $posture = if     ($score -ge 85) { 'Strong'   }
+               elseif ($score -ge 65) { 'Moderate' }
+               elseif ($score -ge 40) { 'At Risk'  }
+               else                   { 'Critical Risk' }
 
     $exec = [System.Text.StringBuilder]::new()
     $null = $exec.AppendLine("# Microsoft 365 Security Assessment — Executive Summary")

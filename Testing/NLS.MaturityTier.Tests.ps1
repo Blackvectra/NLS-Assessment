@@ -14,8 +14,13 @@ Describe 'NLS-Assessment Maturity Tier Classification' {
         $script:RepoRoot = if ($PSScriptRoot) {
             Split-Path -Parent $PSScriptRoot
         } else { (Get-Location).Path }
-        $helperPath = Join-Path $script:RepoRoot 'Lib' 'Get-NLSMaturityTier.ps1'
-        . $helperPath
+        # v4.10.1: Get-NLSMaturityTier now depends on Get-NLSObjectField and
+        # Get-NLSCoverageScore (extracted helpers). Load order matters —
+        # Maturity dot-sources the others at call time so they must be in
+        # scope first.
+        . (Join-Path $script:RepoRoot 'Lib' 'Get-NLSObjectField.ps1')
+        . (Join-Path $script:RepoRoot 'Lib' 'Get-NLSCoverageScore.ps1')
+        . (Join-Path $script:RepoRoot 'Lib' 'Get-NLSMaturityTier.ps1')
     }
 
     Context 'Tier 5 — Optimizing' {
@@ -137,7 +142,7 @@ Describe 'NLS-Assessment Maturity Tier Classification' {
         It 'Emits an ordered hashtable with all required keys' {
             $f = @(@{ State = 'Satisfied'; Severity = 'Medium' })
             $m = Get-NLSMaturityTier -Findings $f
-            $required = @('Tier','Label','Score','CriticalGaps','HighGaps','ScoredControls','ErrorFindings','UnknownStates','Description')
+            $required = @('Tier','Label','Score','CriticalGaps','HighGaps','ScoredControls','ErrorFindings','UnknownStates','Description','Satisfied','Partial','Gap','NotApplicable','Total')
             foreach ($k in $required) {
                 $m.Contains($k) | Should -BeTrue -Because "key '$k' must exist"
             }

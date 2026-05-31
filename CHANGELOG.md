@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## v4.10.1 (2026-05-31)
+
+**Release scope:** further hardening pass that addresses the 3 deferred items from the v4.10.0 code-review punch list. Pure refactor + bug fix release — no new features, no parameter changes, no breaking changes to existing callers. Net: ~2,400 fewer lines of duplicated logic, two new shared Lib helpers, two new Pester suites pinning their behavior, one latent StrictMode bug fixed in the Delta publisher, one switch-fallthrough bug fixed in the Remediation Playbook publisher.
+
+### Added
+
+- **`Lib/Get-NLSCoverageScore.ps1`** — canonical coverage-score helper. Returns `[ordered]@{Satisfied,Partial,Gap,NA,Error,Unknown,Total,Scored,Score}` from a single foreach pass over findings. Supports `-Workload` (ControlId-prefix filter), `-FrameworkId` (FrameworkIds prefix filter), and `-ErrorHandling Exclude|Gap` (Exclude = canonical Maturity semantics, drops Error from denominator; Gap = preserves the historical publisher semantics where Error deflates the score). Now exported via `NLS-Assessment.psm1`/`.psd1` (export #229).
+- **`Lib/Get-NLSObjectField.ps1`** — shape-agnostic field reader for hashtables, OrderedDictionaries, PSCustomObjects (incl. `ConvertFrom-Json` output), and Synchronized hashtables. Never throws on missing keys under StrictMode. Returns the supplied `-Default` for misses. Exported as #230. Documented in its header why a new helper instead of extending `Get-NLSSafeProperty` (the existing helper is property-only; six+ evaluators depend on that property-only behavior).
+- **`Testing/NLS.CoverageScore.Tests.ps1`** — new Pester suite pinning every documented behavior of `Get-NLSCoverageScore`: state counting, `-ErrorHandling` variants, score rounding at half-integer boundaries, `-Workload` + `-FrameworkId` filters, PSCustomObject inputs, missing-FrameworkIds StrictMode safety.
+- **`Testing/NLS.ObjectField.Tests.ps1`** — new Pester suite pinning every shape branch of `Get-NLSObjectField` (hashtable, ordered, PSCustomObject, Synchronized hashtable, ConvertFrom-Json output, null input).
+- **Per-state counts on `Get-NLSMaturityTier` return** — added `Satisfied`, `Partial`, `Gap`, `NotApplicable`, `Total` keys alongside the existing 9. Lets the orchestrator's summary banner (and future callers) read counts from one source instead of re-deriving with `Where-Object`.
+
+### Changed — deduplication
+
+- **Score formula extracted from 5 sites** to one canonical helper. Sites now delegating to `Get-NLSCoverageScore`:
+  - `Lib/Get-NLSMaturityTier.ps1` (variant: `-ErrorHandling Exclude`, the documented "Error doesn't tank CI gates" rule)
+  - `Publishers/Publish-NLSAssessmentHTML.ps1` × 3 (tenant-wide ring score, per-workload scores, per-framework scores — all use `-ErrorHandling Gap` to preserve historical numbers)
+  - `Publishers/Publish-NLSAssessmentSummary.ps1`
+  - `Publishers/Publish-NLSRemediationPlaybook.ps1`
+  - `Publishers/Publish-NLSDeltaReport.ps1` (deleted nested `Get-Score` function)
+- **Shape-agnostic field reader extracted** from `Get-NLSMaturityTier.ps1` (nested `Read-FindingField` deleted) and `Publish-NLSDeltaReport.ps1` (`$getBag` scriptblock + DMARC-regression block — 5 inline shape-switches removed).
+- **Orchestrator summary banner** now reads counts from `$reportMetadata['Maturity']` (precomputed at line 583) instead of 5× `Where-Object` over `$findings`. Fail-soft fallback: if Maturity is unavailable (helper threw, or a `-FromResults` baseline pre-dating v4.10.1), banner falls back to one `Get-NLSCoverageScore` call. Banner always renders.
+
+### Fixed — bugs surfaced during the extraction
+
+- **`Publishers/Publish-NLSRemediationPlaybook.ps1` executive-summary `$posture`** was a `switch ($true) { … }` with no `break` statements. Switch-fallthrough meant `$posture` was secretly an array — `@('Strong','Moderate','At Risk')` for any tenant scoring ≥ 85, `@('Moderate','At Risk')` for any tenant scoring 65-84. Visible bug in every executive markdown for any tenant scoring above 40. Rewritten as `if/elseif` (same pattern the Summary publisher already used).
+- **`Publishers/Publish-NLSDeltaReport.ps1` `$getBag`** had latent StrictMode bugs at `$bag.Success` and `$bag.Data`: when called with a `PSCustomObject` bag that didn't have those properties (e.g., a baseline JSON from a tool version that named the collector result differently), the access would throw rather than gracefully returning `@()`. Same fix on the DMARC-regression block at `$bd.DMARCPolicy` / `$cd.DMARCPolicy`. Now flow through `Get-NLSObjectField` with explicit `-Default` values.
+
+### Internal contract notes
+
+- **`Get-NLSCoverageScore -ErrorHandling Exclude` (Maturity) vs `Gap` (publishers)** — the helper exposes both variants instead of forcing convergence. The HTML score ring (uses `Gap`) and the Maturity badge (uses `Exclude`) on the same report will still differ slightly on tenants with `Error` findings — by design. Reconciliation is a separate decision for a future release; today's release prioritizes "zero user-visible score shift" over "one global score."
+- **Behavior preservation verified by**: the existing `Testing/NLS.MaturityTier.Tests.ps1` suite (all assertions pass against the refactored helper; the canary that pinned v4.10.0 behavior); 32-case manual regression suite covering both helpers' edge cases (StrictMode, $null-skip, typo'd states, PSCustomObject input, filter composition).
+
 ## v4.10.0 (2026-05-31)
 
 **Release highlights:** new Maturity tier (roadmap F1), CI/automation threshold exit codes, Quick scan mode, CISA-aligned security program documentation (VDP, SSDF self-attestation, OpenSSF Best Practices self-assessment), and a substantial correctness/security hardening pass.
