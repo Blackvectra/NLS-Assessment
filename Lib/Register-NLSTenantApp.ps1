@@ -85,6 +85,16 @@ function Register-NLSTenantApp {
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
+    # ── Platform precondition ───────────────────────────────────────────────
+    # New-SelfSignedCertificate and the Cert:\CurrentUser\My provider are
+    # Windows-only. If we discover this mid-flight (after creating the app
+    # registration) we'd leave the customer tenant in a half-onboarded state:
+    # the app exists, has no cert, and clients.json has no record. Fail at the
+    # top, before any write.
+    if (-not $IsWindows -and $env:OS -ne 'Windows_NT') {
+        throw 'Register-NLSTenantApp requires Windows: it uses New-SelfSignedCertificate and the Cert:\ provider, which only ship in Windows PowerShell / PowerShell on Windows. Run this from a Windows workstation.'
+    }
+
     # ── Resolve display name from branding if not supplied ───────────────────
     if (-not $DisplayName) {
         $brandCo = if ($script:NLSBrand -and $script:NLSBrand['CompanyName']) { $script:NLSBrand['CompanyName'] } else { 'NLS' }
@@ -164,7 +174,10 @@ function Register-NLSTenantApp {
     }
 
     # ── Idempotency guard: refuse if an app of this name already exists ──────
-    $existing = Get-MgApplication -Filter "displayName eq '$DisplayName'" -ErrorAction SilentlyContinue
+    # OData filter escape: a single apostrophe in the value (e.g. "O'Brien
+    # Consulting") breaks the filter syntax. The convention is to double it.
+    $escapedName = $DisplayName -replace "'", "''"
+    $existing = Get-MgApplication -Filter "displayName eq '$escapedName'" -ErrorAction SilentlyContinue
     if ($existing) {
         Write-Warning "An app named '$DisplayName' already exists (appId $($existing.AppId)). Refusing to create a duplicate. Delete it in Entra or use a different -DisplayName if you intend to re-onboard."
         return
