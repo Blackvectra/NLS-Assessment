@@ -149,5 +149,69 @@ Describe 'NLS-Assessment Maturity Tier Classification' {
             $m.Tier | Should -BeGreaterOrEqual 1
             $m.Tier | Should -BeLessOrEqual 5
         }
+
+        It 'Includes ErrorFindings count in the result' {
+            $f = @(@{ State = 'Error'; Severity = 'High' })
+            $m = Get-NLSMaturityTier -Findings $f
+            $m.Contains('ErrorFindings') | Should -BeTrue
+            $m.ErrorFindings              | Should -Be 1
+        }
+    }
+
+    Context 'Defensive input handling (post-code-review hardening)' {
+
+        It 'Accepts an empty findings array without throwing a binding error' {
+            { Get-NLSMaturityTier -Findings @() } | Should -Not -Throw
+            $m = Get-NLSMaturityTier -Findings @()
+            $m.Score          | Should -Be 0
+            $m.ScoredControls | Should -Be 0
+            $m.Tier           | Should -Be 1
+        }
+
+        It 'Excludes State=Error from the score denominator (collector hiccups do not deflate score)' {
+            $f = @()
+            $f += 1..50 | ForEach-Object { @{ State = 'Satisfied'; Severity = 'Medium' } }
+            $f += 1..50 | ForEach-Object { @{ State = 'Error';     Severity = 'High'   } }
+            $m = Get-NLSMaturityTier -Findings $f
+            # Old behavior: scored=100, sat=50, score=50 — deflated to Developing.
+            # New: Error excluded → scored=50, sat=50, score=100 → Optimizing.
+            $m.Score          | Should -Be 100
+            $m.ScoredControls | Should -Be 50
+            $m.ErrorFindings  | Should -Be 50
+            $m.Tier           | Should -Be 5
+        }
+
+        It 'Handles PSCustomObject findings (FromResults / ConvertFrom-Json shape)' {
+            $f = @(
+                [pscustomobject]@{ State = 'Satisfied'; Severity = 'Critical' }
+                [pscustomobject]@{ State = 'Gap';       Severity = 'High'     }
+            )
+            { Get-NLSMaturityTier -Findings $f } | Should -Not -Throw
+            $m = Get-NLSMaturityTier -Findings $f
+            $m.HighGaps       | Should -Be 1
+            $m.ScoredControls | Should -Be 2
+        }
+
+        It 'Survives findings missing State or Severity properties under StrictMode' {
+            $f = @(
+                @{ Foo = 'bar' }                                      # no State at all (hashtable)
+                @{ State = 'Satisfied' }                              # no Severity
+                [pscustomobject]@{ NotState = 'x' }                   # no State at all (PSCO)
+                [pscustomobject]@{ State = 'Gap'; Severity = 'High' } # well-formed
+            )
+            { Get-NLSMaturityTier -Findings $f } | Should -Not -Throw
+            $m = Get-NLSMaturityTier -Findings $f
+            $m.HighGaps | Should -Be 1
+        }
+
+        It 'Skips $null entries in the findings array without throwing' {
+            $f = @(
+                @{ State = 'Satisfied'; Severity = 'Medium' },
+                @{ State = 'Satisfied'; Severity = 'Medium' }
+            )
+            { Get-NLSMaturityTier -Findings $f } | Should -Not -Throw
+            $m = Get-NLSMaturityTier -Findings $f
+            $m.ScoredControls | Should -Be 2
+        }
     }
 }

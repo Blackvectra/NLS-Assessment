@@ -40,6 +40,25 @@ Three-layer security-program documentation aligned to CISA's published expectati
 
 Why this matters operationally: government / regulated-industry MSP buyers (NLS clients with CISA BOD 18-01 obligations) increasingly require a published VDP + SSDF attestation from every tool in their pipeline. This release lets the sales conversation point at the repo instead of having to handwave.
 
+### Fixed — post-PR#13 code review hardening pass
+
+15 findings from a recall-mode code review of the maturity / threshold / Quick PR. Highest-severity items grouped:
+
+- **`-FromResults` path crashed on every invocation.** Line 360 did `@{} + $priorData.Metadata`, but `ConvertFrom-Json` returns `PSCustomObject`, not `Hashtable` → `A hash table can only be added to another hash table`. Switched to `ConvertFrom-Json -AsHashtable` and explicit `[hashtable]` casts so `Maturity` / threshold lookups work on the re-published metadata.
+- **Maturity helper crashed on empty findings.** Mandatory `[object[]]` without `[AllowEmptyCollection()]` rejected `@()` — tenants with all `Skip*` flags silently lost the badge AND silently disabled `-FailOnScoreBelow`. Added `[AllowEmptyCollection()]` and an explicit zero-score / Tier 1 result.
+- **Maturity helper crashed on malformed findings under StrictMode.** `Where-Object State -eq 'X'` simple syntax throws `PropertyNotFoundException` on items missing `State`. Replaced with a single shape-agnostic pass that handles both `Hashtable` and `PSCustomObject` (FromResults shape), tolerates missing fields, and skips `$null` entries.
+- **`State='Error'` findings deflated the maturity score.** `Add-NLSFinding` accepts `State='Error'` for collector failures (transient throttling, partial collection). The old denominator counted these as gaps, producing false `-FailOnScoreBelow` CI alarms on flaky tenants. Now excluded from the denominator and surfaced as `ErrorFindings` in the result.
+- **`-FailOnScoreBelow` silently no-op'd when Maturity classification failed.** The old guard `Contains('Maturity')` returned false on any helper exception, skipping the CI gate without notification. Now logs a `Write-Warning` declaring the gate INOPERATIVE for that run, and the summary banner shows `Maturity unavailable (<reason>)`.
+- **Quick mode swallowed `Get-NLSControlDefinitions` failure → 0 evaluators → exit 2.** A corrupted `controls.json` produced an "empty assessment" that CI read as a benign signal. Now fails closed via the outer fatal-exit path.
+- **Quick mode + FromResults silently ignored the switch.** Now emits a `Write-Warning` explaining the user must re-run against the live tenant.
+- **Threshold exit codes (10/11/12) hijacked `$NLSFatalExitCode`.** A real crash that occurred after a threshold breach masqueraded as a graceful policy trip; a graceful trip looked like a fatal crash. Moved to `$script:NLSThresholdExitCode` with explicit precedence (fatal > threshold > success) at the final exit-resolution block.
+- **Threshold counts re-derived from `$findings`** were now read from `$reportMetadata.Maturity.CriticalGaps` / `.HighGaps` so the badge and the CI gate can never disagree.
+- **Maturity recompute lifted out of the `if (-not $skipCollection)` guard** so `-FromResults` runs always re-classify against the current findings stream rather than using stale baseline metadata.
+- **Windows guard `-not $IsWindows -and $env:OS -ne 'Windows_NT'`** was over-permissive — any non-Windows shell with that env var inherited bypassed the guard and crashed mid-onboarding. Simplified to `-not $IsWindows` (PS7's authoritative variable); skips the throw under `-WhatIf` so MSP techs can preview the call from a Mac.
+- **`Set-StrictMode` / `$ErrorActionPreference = 'Stop'` moved out of file scope and into the function body** in `Get-NLSMaturityTier.ps1`, matching the convention used by every other Lib helper. The previous file-scope assignment leaked into module session state during dot-source.
+
+New Pester coverage in `Testing/NLS.MaturityTier.Tests.ps1` for the empty-findings path, Error exclusion, PSCustomObject inputs, and missing-property survival under StrictMode.
+
 ### Added — automation features: Maturity tier, threshold exit codes, Quick scan
 
 Four operator-facing features for CI/automation pipelines and quick triage:

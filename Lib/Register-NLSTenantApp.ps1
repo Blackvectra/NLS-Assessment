@@ -91,8 +91,16 @@ function Register-NLSTenantApp {
     # registration) we'd leave the customer tenant in a half-onboarded state:
     # the app exists, has no cert, and clients.json has no record. Fail at the
     # top, before any write.
-    if (-not $IsWindows -and $env:OS -ne 'Windows_NT') {
-        throw 'Register-NLSTenantApp requires Windows: it uses New-SelfSignedCertificate and the Cert:\ provider, which only ship in Windows PowerShell / PowerShell on Windows. Run this from a Windows workstation.'
+    #
+    # PS7's `$IsWindows` is authoritative — the older `-or $env:OS = Windows_NT`
+    # fallback was over-permissive (WSL or any shell with that env var inherited
+    # bypassed the guard). #Requires -Version 7.0 at the file head guarantees
+    # `$IsWindows` exists; no PS5.1 reach-through is possible.
+    #
+    # Skip the throw under -WhatIf so operators can preview from non-Windows
+    # dev machines. -WhatIf is read-only by SupportsShouldProcess contract.
+    if (-not $IsWindows -and -not $WhatIfPreference) {
+        throw 'Register-NLSTenantApp requires Windows: it uses New-SelfSignedCertificate and the Cert:\ provider, which only ship in PowerShell on Windows. Run this from a Windows workstation (or use -WhatIf to preview from any host).'
     }
 
     # ── Resolve display name from branding if not supplied ───────────────────

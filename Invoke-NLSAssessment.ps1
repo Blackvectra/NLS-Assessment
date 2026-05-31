@@ -137,8 +137,9 @@ Set-StrictMode -Version Latest
 # (lines 570 + 586) never throw VariableIsUndefined on the success path. Without
 # this every successful run crashes with a stack trace AFTER the report is
 # written but BEFORE `exit 0` lands → callers see exit code 1.
-$script:NLSFatalExitCode  = $null
-$script:NLSSuccessExitCode = $null
+$script:NLSFatalExitCode     = $null
+$script:NLSSuccessExitCode   = $null
+$script:NLSThresholdExitCode = $null
 
 # OWASP ASVS V11.2.2 / OSSTMM DN5 — enforce TLS 1.2 minimum (Microsoft endpoints
 # already require this, but defense-in-depth catches dev/test environments where
@@ -354,11 +355,18 @@ if ($needsAction.Count -gt 0) {
 # ── FromResults mode — skip collection, just republish ───────────────────────
 if ($FromResults -and (Test-Path -LiteralPath $FromResults)) {
     Write-Host "[-] FromResults mode — regenerating reports from $FromResults" -ForegroundColor Cyan
-    $priorData = Get-Content -LiteralPath $FromResults -Raw -Encoding utf8 | ConvertFrom-Json
+    # PS7 -AsHashtable gives us hashtables all the way down so downstream
+    # `.Contains(key)` (Maturity badge, threshold exit codes) works. The prior
+    # `@{} + $priorData.Metadata` form threw `A hash table can only be added
+    # to another hash table` because ConvertFrom-Json returns PSCustomObject.
+    $priorData = Get-Content -LiteralPath $FromResults -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
     $findings = [object[]]@($priorData.Findings)
-    $conn = if ($priorData.Connections) { @{} + $priorData.Connections } else { @{} }
-    $reportMetadata = if ($priorData.Metadata) { @{} + $priorData.Metadata } else {
+    $conn = if ($priorData.Connections) { [hashtable]$priorData.Connections } else { @{} }
+    $reportMetadata = if ($priorData.Metadata) { [hashtable]$priorData.Metadata } else {
         @{ TenantDomain='Unknown'; AssessmentDate=(Get-Date -Format 'MMMM dd, yyyy'); ToolVersion=$script:NLSAssessmentVersion }
+    }
+    if ($Quick) {
+        Write-Warning "-Quick has no effect with -FromResults: findings are loaded from the baseline JSON, not re-evaluated. To produce a Quick scan, re-run against the live tenant."
     }
     $tenantTag = if ($reportMetadata.TenantDomain) { ($reportMetadata.TenantDomain -split '\.')[0] } else { 'tenant' }
     # OWASP A01 — strip any non-[a-zA-Z0-9-] before using tenantTag in a file path
@@ -517,18 +525,25 @@ if (-not $skipCollection) {
                     Select-Object -ExpandProperty Name)
 
     # ── -Quick: filter evaluators to those that handle Critical / High controls
+    # NOTE: filter is by evaluator FUNCTION name, so any workload-level function
+    # that handles BOTH Critical/High and Medium/Low controls (DEF-1.x, PVW-*,
+    # SPO-*, etc) will still emit its Low/Medium findings. The maturity badge
+    # and HTML score ring reflect the actual set, not the requested severity
+    # range. Treat -Quick as "skip the workloads that ONLY have low-severity
+    # checks" rather than "skip every Low/Medium finding."
     if ($Quick) {
         $highSevEvaluators = @{}
-        try {
-            foreach ($ctrl in (Get-NLSControlDefinitions)) {
-                if ($ctrl.Severity -in @('Critical','High') -and $ctrl.EvaluatorFunction) {
-                    $highSevEvaluators[$ctrl.EvaluatorFunction] = $true
-                }
+        # Fail-closed: a corrupt controls.json must not silently produce a
+        # filter that excludes every evaluator and exits 2 ("no findings").
+        # The outer try/catch already turns this into fatal=4 with a message.
+        foreach ($ctrl in (Get-NLSControlDefinitions)) {
+            if ($ctrl.Severity -in @('Critical','High') -and $ctrl.EvaluatorFunction) {
+                $highSevEvaluators[$ctrl.EvaluatorFunction] = $true
             }
-        } catch { Write-Warning "Quick-scan filter: could not resolve control defs ($($_.Exception.Message))" }
+        }
         $beforeCount = $evaluators.Count
         $evaluators  = @($evaluators | Where-Object { $highSevEvaluators.ContainsKey($_) })
-        Write-Host "  [i] Quick mode: $($evaluators.Count) of $beforeCount evaluators (Critical + High only)" -ForegroundColor Yellow
+        Write-Host "  [i] Quick mode: $($evaluators.Count) of $beforeCount evaluators (workloads with Critical+High only; lower-severity findings inside those workloads still surface)" -ForegroundColor Yellow
     }
 
     foreach ($ev in $evaluators) {
@@ -555,18 +570,20 @@ if (-not $skipCollection) {
         Brand          = $NLSBrand
         QuickScan      = [bool]$Quick
     }
+}
 
-    # ── Maturity tier (roadmap F1) ──────────────────────────────────────────
-    # Derived from the final findings stream — not a separate evaluator pass.
-    # Result is embedded in the metadata so every publisher (HTML, JSON,
-    # Markdown, Playbook, Delta) sees the same classification.
-    if (Get-Command Get-NLSMaturityTier -ErrorAction SilentlyContinue) {
-        try {
-            $reportMetadata['Maturity'] = Get-NLSMaturityTier -Findings $findings
-        } catch {
-            Write-Warning "Maturity-tier classification failed: $($_.Exception.Message)"
-        }
-    }
+# ── Maturity tier (roadmap F1) ──────────────────────────────────────────────
+# Derived from the final findings stream — recomputed every run including
+# -FromResults so the badge always reflects the current findings, not whatever
+# Maturity value (if any) the baseline JSON happened to carry. Result is
+# embedded in the metadata so publishers (HTML, JSON, Markdown, Playbook,
+# Delta) can render the same classification. Failure is logged + surfaced
+# via the summary banner so a missing badge doesn't slip past the operator.
+try {
+    $reportMetadata['Maturity'] = Get-NLSMaturityTier -Findings $findings
+} catch {
+    Write-Warning "Maturity-tier classification failed: $($_.Exception.Message)"
+    $reportMetadata['MaturityError'] = $_.Exception.Message
 }
 
 # ── Publish reports ──────────────────────────────────────────────────────────
@@ -716,39 +733,51 @@ Write-Host "  Output         $OutputPath"                                      -
 if ($reportMetadata.Contains('Maturity') -and $reportMetadata['Maturity']) {
     $m = $reportMetadata['Maturity']
     Write-Host "  Maturity       $($m.Label) (tier $($m.Tier)/5, score $($m.Score)/100)" -ForegroundColor Cyan
+} elseif ($reportMetadata.Contains('MaturityError')) {
+    Write-Host "  Maturity       unavailable ($($reportMetadata['MaturityError']))" -ForegroundColor Yellow
 }
 Write-Host ""
 
 # ── Threshold exit codes (CI / automation) ────────────────────────────────────
-# Operators wire these into Task Scheduler / cron / GitHub Actions to fail a
-# scheduled run when posture drifts past a tolerated limit. Each switch is
-# opt-in (default 0 = disabled), and only fires when a real gap count crosses
-# the threshold. The threshold codes (10/11/12) are distinct from the
-# existing 1/2/3/4 spec so callers can disambiguate "no findings" from
-# "too many criticals". First-match wins so the most severe signal lands.
-$threshFired = $false
-if ($FailOnCritical -gt 0 -and $s.Gap -gt 0) {
-    $critGaps = @($findings | Where-Object { $_.State -eq 'Gap' -and $_.Severity -eq 'Critical' }).Count
-    if ($critGaps -ge $FailOnCritical) {
+# Opt-in policy gate (default 0 = disabled). Reads pre-computed counts from
+# $reportMetadata['Maturity'] so the badge in the report and the threshold the
+# CI fires on can never disagree — the older inline `Where-Object` re-derivation
+# meant a future change to the maturity counter rule (e.g., excluding Error
+# from Gap counts) would silently split into two answers.
+#
+# Threshold codes (10/11/12) land on $script:NLSThresholdExitCode — a separate
+# channel from $script:NLSFatalExitCode (1=auth, 4=fatal). This preserves the
+# disambiguation between "graceful policy breach, all reports on disk" and
+# "orchestrator crashed mid-publish": the final exit-resolution block at the
+# bottom of this script gives fatal precedence over threshold, threshold
+# precedence over success.
+#
+# If the Maturity helper failed (-FailOnScoreBelow uses it), the threshold is
+# explicitly skipped with a warning rather than silently no-op'd. Operators
+# wiring a CI gate get a loud signal when the gate becomes inoperative.
+if ($FailOnCritical -gt 0 -or $FailOnHigh -gt 0 -or $FailOnScoreBelow -gt 0) {
+    $mat = if ($reportMetadata.Contains('Maturity')) { $reportMetadata['Maturity'] } else { $null }
+    $critGaps = if ($mat) { [int]$mat.CriticalGaps } else { 0 }
+    $highGaps = if ($mat) { [int]$mat.HighGaps }     else { 0 }
+
+    if ($FailOnCritical -gt 0 -and $critGaps -ge $FailOnCritical) {
         Write-Host "[!] Threshold breached: $critGaps Critical gaps (limit $FailOnCritical) — exiting 10" -ForegroundColor Red
-        $script:NLSFatalExitCode = 10
-        $threshFired = $true
+        $script:NLSThresholdExitCode = 10
     }
-}
-if (-not $threshFired -and $FailOnHigh -gt 0 -and $s.Gap -gt 0) {
-    $highGaps = @($findings | Where-Object { $_.State -eq 'Gap' -and $_.Severity -eq 'High' }).Count
-    if ($highGaps -ge $FailOnHigh) {
+    elseif ($FailOnHigh -gt 0 -and $highGaps -ge $FailOnHigh) {
         Write-Host "[!] Threshold breached: $highGaps High gaps (limit $FailOnHigh) — exiting 11" -ForegroundColor Red
-        $script:NLSFatalExitCode = 11
-        $threshFired = $true
+        $script:NLSThresholdExitCode = 11
     }
-}
-if (-not $threshFired -and $FailOnScoreBelow -gt 0 -and $reportMetadata.Contains('Maturity') -and $reportMetadata['Maturity']) {
-    $maturityScore = [int]$reportMetadata['Maturity'].Score
-    if ($maturityScore -lt $FailOnScoreBelow) {
-        Write-Host "[!] Threshold breached: score $maturityScore < $FailOnScoreBelow — exiting 12" -ForegroundColor Red
-        $script:NLSFatalExitCode = 12
-        $threshFired = $true
+    elseif ($FailOnScoreBelow -gt 0) {
+        if ($mat -and $mat.Contains('Score') -and $null -ne $mat.Score) {
+            $maturityScore = [int]$mat.Score
+            if ($maturityScore -lt $FailOnScoreBelow) {
+                Write-Host "[!] Threshold breached: score $maturityScore < $FailOnScoreBelow — exiting 12" -ForegroundColor Red
+                $script:NLSThresholdExitCode = 12
+            }
+        } else {
+            Write-Warning "-FailOnScoreBelow $FailOnScoreBelow is set but Maturity score is unavailable — skipping threshold check. Investigate the maturity warning above; the CI gate is INOPERATIVE for this run."
+        }
     }
 }
 
@@ -787,8 +816,14 @@ finally {
 
 # Resolve and emit the exit code (must be done OUTSIDE the try/catch/finally
 # so the exit happens after the disconnect runs).
+# Precedence: fatal (auth/crash) > threshold (policy gate) > success.
+# Threshold only applies when no fatal error occurred — a crash that happens
+# to leave a threshold value set must not masquerade as a graceful breach.
 if ($script:NLSFatalExitCode) {
     exit $script:NLSFatalExitCode
+}
+if ($script:NLSThresholdExitCode) {
+    exit $script:NLSThresholdExitCode
 }
 if ($null -ne $script:NLSSuccessExitCode) {
     exit $script:NLSSuccessExitCode
