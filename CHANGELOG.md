@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added — app-only tenant onboarding (`-RegisterApp`)
+
+A one-time onboarding flow that registers a read-only enterprise app + certificate in a customer tenant, so subsequent scans run **app-only** — no device-code prompts, and immune to Conditional Access "Authentication Flows" policies (the `AADSTS530036` block that prevents the Teams/EXO device-code sign-in on hardened tenants).
+
+- **`Lib/Register-NLSTenantApp.ps1`** (new) — generates a self-signed client-auth cert in `Cert:\CurrentUser\My`, creates the app registration, creates its service principal, and either auto-grants admin consent (`-GrantConsent`, operator must be Global Admin) or emits an admin-consent URL for a Global Admin. Records `ClientId` / `TenantId` / `CertThumbprint` in `Config/clients.json`.
+- **Permission GUIDs are resolved at runtime** from the target tenant's own Microsoft Graph service principal — never hardcoded. Permissions with no application-permission equivalent are reported and skipped.
+- **The app it creates is read-only** (all requested Graph permissions are `*.Read.All`). The onboarding step is the one sanctioned directory write, isolated in this function and gated behind `-RegisterApp` + `SupportsShouldProcess`/`-WhatIf`.
+- **Entry-script wiring** (`Invoke-NLSAssessment.ps1`):
+  - `-RegisterApp -TenantDomain <domain>` — connects interactively with write scopes, runs onboarding, exits.
+  - `-TenantDomain <domain>` on a normal scan — looks up the onboarded `ClientId` + cert thumbprint from `clients.json` and runs app-only with zero typed GUIDs. Falls back to interactive with a hint if the tenant isn't onboarded.
+- Exchange Online app-only needs one manual follow-up (assign the app the **Global Reader** directory role); the function prints the instruction.
+- `clients.json` gains `ClientId`, `CertThumbprint`, `AuthMode`, `OnboardedAt` fields; the file's ACL is restricted on write.
+
+**Note:** the connection side (`Connect-NLSServices` AppOnly parameter set) already supported cert auth; this release adds the missing onboarding + auto-lookup.
+
 ## v4.9.0 (2026-05-29) — local web GUI
 
 ### Added — local web GUI

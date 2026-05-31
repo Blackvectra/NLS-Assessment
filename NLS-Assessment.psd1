@@ -35,6 +35,7 @@
         'ConvertTo-NLSHtmlSafe',
         'ConvertTo-NLSSafeUrl',
         'Start-NLSWebServer',
+        'Register-NLSTenantApp',
         'Get-NLSControlDefinitions',
         'Get-NLSControlById',
         'Get-NLSFindingRiskCost',
