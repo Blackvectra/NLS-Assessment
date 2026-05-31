@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Added — CISA / SSDF / OpenSSF security posture uplift
+
+Three-layer security-program documentation aligned to CISA's published expectations for federal-software vendors. Pure documentation + GitHub-config additions; no code or behavior changes.
+
+**Vulnerability Disclosure Policy** ([`docs/VULNERABILITY-DISCLOSURE-POLICY.md`](docs/VULNERABILITY-DISCLOSURE-POLICY.md)) — full CISA BOD 20-01 alignment:
+
+- 3 business-day acknowledgement SLA, 7-day triage SLA, 14-day status updates
+- Severity-tied fix SLAs (Critical 7d / High 30d / Medium 60d / Low next release)
+- Explicit Safe Harbor language giving researchers authorization to test
+- Scope + out-of-scope statement so reports route to the right project
+- Recognition / credit policy
+- Annual review cadence
+
+**Secure Development self-attestation** ([`docs/SECURE-DEVELOPMENT.md`](docs/SECURE-DEVELOPMENT.md)) — NIST SP 800-218 (SSDF) mapping:
+
+- All 22 SSDF tasks attested with file/workflow evidence
+- Matches CISA Secure Software Development Attestation Form 1.0 structure
+- PO / PS / PW / RV practice families covered
+
+**OpenSSF Best Practices self-assessment** ([`docs/OPENSSF-BEST-PRACTICES.md`](docs/OPENSSF-BEST-PRACTICES.md)):
+
+- Passing tier: 67 / 67 criteria met (100%)
+- Silver tier: 38 / 65 (58%, gap list documented)
+- Gold tier: 14 / 56 (25%, aspirational)
+- Evidence trail for every criterion in this repository
+
+**Repository hygiene**:
+
+- [`SECURITY.md`](SECURITY.md) — rewritten with the same disclosure SLA, scope statement, and Safe Harbor as the VDP (was: short paragraph + email)
+- [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) — security checklist required on every PR (read-only invariant, input validation, no plaintext PII, StrictMode-safe field access)
+- [`.github/ISSUE_TEMPLATE/config.yml`](.github/ISSUE_TEMPLATE/config.yml) — surfaces the private security advisory channel BEFORE the operator can open a public issue describing a vulnerability
+- [`.github/CODEOWNERS`](.github/CODEOWNERS) — auto-routes security-sensitive paths (CI workflows, auth/connect code, sensitive-file ACL helper) to the security engineer
+- [`.well-known/security.txt`](.well-known/security.txt) — RFC 9116 machine-readable security contact metadata
+- [`README.md`](README.md) — OpenSSF Best Practices + SSDF + CISA BOD 20-01 badges, security policy CTA above the fold
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — security-vulnerability reporting section, `security:` commit prefix convention
+
+Why this matters operationally: government / regulated-industry MSP buyers (NLS clients with CISA BOD 18-01 obligations) increasingly require a published VDP + SSDF attestation from every tool in their pipeline. This release lets the sales conversation point at the repo instead of having to handwave.
+
 ### Added — automation features: Maturity tier, threshold exit codes, Quick scan
 
 Four operator-facing features for CI/automation pipelines and quick triage:
