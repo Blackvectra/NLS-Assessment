@@ -2,7 +2,50 @@
 
 ## Unreleased
 
-### Added — app-only tenant onboarding (`-RegisterApp`)
+### Added — automation features: Maturity tier, threshold exit codes, Quick scan
+
+Four operator-facing features for CI/automation pipelines and quick triage:
+
+- **`Lib/Get-NLSMaturityTier.ps1`** (new, roadmap F1) — derives a 1–5 tier (Initial / Developing / Defined / Managed / Optimizing) from the final findings stream. Tier rules combine score % and absolute Critical/High gap counts so the badge can never disagree with the score ring. Embedded in `$reportMetadata.Maturity` so every publisher (HTML, JSON, Markdown, Playbook, Delta) sees the same classification. Score formula matches the existing HTML publisher: `round(100 * (Satisfied + 0.5*Partial) / ScoredControls)`.
+- **`-Quick` switch** on `Invoke-NLSAssessment.ps1` — filters the evaluator set to only those that score Critical + High controls. Same collectors run; only the scoring pass is short-circuited. Useful for "give me a 60-second triage" runs. Metadata now records `QuickScan = $true` so downstream consumers can flag that the report intentionally skipped Medium / Low.
+- **`-FailOnCritical N`, `-FailOnHigh N`, `-FailOnScoreBelow N`** — opt-in threshold exit codes (default 0 = disabled). Distinct exit-code range (10/11/12) so CI callers can disambiguate "no findings" (code 2) from "too many Critical gaps" (code 10). First-match wins, most severe signal lands.
+- **`-BaselineResults <path>`** — already implemented (`Publishers/Publish-NLSDeltaReport.ps1`, 473 lines covering score delta, finding regressions, CA drift, role drift, OAuth drift, DMARC drift). Now surfaced in README so operators discover it.
+
+New Pester suite `Testing/NLS.MaturityTier.Tests.ps1` pins all five tier transitions, the half-credit Partial scoring, NotApplicable exclusion, and the output-shape contract.
+
+### Added — HIPAA / SOC 2 / PCI DSS / ISO 27001 citations to every control
+
+A framework-coverage audit found that only 33 of 195 controls had a HIPAA citation, 41 had SOC 2, 17 had PCI DSS, and 72 had ISO 27001 — and 10 of the 33 HIPAA mappings were on the wrong Security Rule subpart (e.g., mailbox audit logging was cited as §164.312(e)(2) Integrity when it should be §164.312(b) Audit Controls).
+
+This release lands citations for all four frameworks across every one of the 195 controls. 720 of 780 possible cells were changed. CIS, CMMC, NIST, MITRE, and SCuBA citations were preserved unchanged.
+
+**Confirmed HIPAA mapping errors corrected** (the 10 the audit found):
+
+| Control | Old | New |
+|---|---|---|
+| EXO-1.1 Mailbox Audit Logging | §164.312(e)(2) | §164.312(b) Audit Controls |
+| EXO-1.2 SMTP Client Auth Disabled | §164.312(e)(2) | §164.312(e)(1) Transmission Security |
+| EXO-5.1 Per-User Mailbox Audit (all) | §164.308(a)(1) | §164.312(b) |
+| EXO-7.3 No mailboxes w/ audit disabled | §164.308(a)(1) | §164.312(b) |
+| AAD-7.2 Break-Glass Accounts | §164.308(a)(3) | §164.312(a)(2)(ii) Emergency Access Procedure |
+| INT-4.3 Device OS Version Compliance | §164.308(a)(5) Training | §164.308(a)(1)(ii)(B) Risk Management |
+| PVW-1.1 Unified Audit Log Enabled | §164.308(a)(1) | §164.312(b), §164.308(a)(1)(ii)(D) |
+| PVW-2.4 Insider Risk Management | §164.308(a)(1) | §164.308(a)(6) Security Incident Procedures |
+| PVW-4.2 Audit Log Retention ≥ 1 yr | §164.308(a)(1) | §164.316(b)(2)(i) Time Limit + §164.312(b) |
+| PVW-4.3 Sensitivity Labels Defined | §164.514(b) Deidentification | §164.502(b) Minimum Necessary |
+
+**Coverage delta:**
+
+| Framework | Before | After |
+|---|---|---|
+| HIPAA | 33 / 195 (17%) | **195 / 195 (100%)** |
+| SOC 2 | 41 / 195 (21%) | **195 / 195 (100%)** |
+| PCI DSS | 17 / 195 (9%) | **195 / 195 (100%)** |
+| ISO 27001 | 72 / 195 (37%) | **195 / 195 (100%)** |
+
+**New Pester invariant** (`Testing/NLS.FrameworkCoverage.Tests.ps1`) pins the contract for future PRs: every control must carry a non-empty citation for all 8 frameworks, each in the right shape (HIPAA `§164.*`, SOC 2 TSC codes, PCI `Req N.N`, ISO `A.[5-8].N`), and the 10 HIPAA fixes are pinned by control ID so a future edit cannot regress them silently.
+
+## v4.9.0 (2026-05-29) — local web GUI
 
 A one-time onboarding flow that registers a read-only enterprise app + certificate in a customer tenant, so subsequent scans run **app-only** — no device-code prompts, and immune to Conditional Access "Authentication Flows" policies (the `AADSTS530036` block that prevents the Teams/EXO device-code sign-in on hardened tenants).
 

@@ -61,6 +61,27 @@ cd NLS-Assessment-Tool
 # Output lands in .\output\<timestamp>\
 ```
 
+### Quick Triage, Delta, and CI Exit Codes
+
+For automation pipelines and fast triage:
+
+```powershell
+# Quick scan — only Critical + High controls (faster, lower noise)
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@client.com -Quick
+
+# Compare against a prior baseline JSON — emits a delta report
+# (score delta, finding regressions, CA / role / OAuth / DMARC drift)
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@client.com `
+    -BaselineResults .\output\client\20260415-results.json
+
+# CI / Task Scheduler thresholds — non-zero exit when posture drifts
+# Exit 10 = critical threshold, 11 = high threshold, 12 = score threshold
+.\Invoke-NLSAssessment.ps1 -UserPrincipalName admin@client.com `
+    -FailOnCritical 1 -FailOnHigh 5 -FailOnScoreBelow 70
+```
+
+Every run now classifies the tenant into a **Tenant Security Maturity Tier** (Initial / Developing / Defined / Managed / Optimizing) — the label appears in the console summary and is embedded in the JSON metadata for downstream dashboards.
+
 ### MSP Batch Run (GDAP)
 
 ```powershell
@@ -241,4 +262,4 @@ Internal use — NextLayerSec. Not licensed for redistribution.
 
 ---
 
-*NLS-Assessment v4.6.5 · 195 controls · 220 exported functions · 100 Pester tests*
+*NLS-Assessment v4.9.0 · 195 controls · 228 exported functions · 142 Pester tests*

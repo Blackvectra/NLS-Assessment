@@ -102,7 +102,30 @@ param(
 
     # Port for the -Web GUI loopback server. Default avoids common collisions.
     [ValidateRange(1024, 65535)]
-    [int] $WebPort = 8765
+    [int] $WebPort = 8765,
+
+    # ── Quick scan mode ──────────────────────────────────────────────────────
+    # Only evaluate Critical + High controls. Skips Medium / Low / Informational
+    # evaluators entirely. Designed for live demos and sanity checks; finishes
+    # in under a minute on most tenants instead of ~10 min for the full sweep.
+    [switch] $Quick,
+
+    # ── Automation-friendly threshold exit codes ────────────────────────────
+    # Non-zero exit on failure threshold. Default 0 = disabled (preserves the
+    # existing exit-code spec). When any of these fires, the run still produces
+    # all artifacts; the non-zero exit is purely a signal for cron / Task
+    # Scheduler / CI integrations to take action (email IT, file a ticket).
+    #   10 = critical-gap threshold breached
+    #   11 = high-gap threshold breached
+    #   12 = score below threshold
+    [ValidateRange(0, 999)]
+    [int] $FailOnCritical = 0,
+
+    [ValidateRange(0, 999)]
+    [int] $FailOnHigh     = 0,
+
+    [ValidateRange(0, 100)]
+    [int] $FailOnScoreBelow = 0
 )
 
 # OWASP ASVS V16.4.1 — strict mode at the entry point so the orchestrator
@@ -492,6 +515,22 @@ if (-not $skipCollection) {
     # All evaluators discovered by name from the loaded module
     $evaluators = @(Get-Command -Module NLS-Assessment -Name 'Test-NLSControl*' -ErrorAction SilentlyContinue |
                     Select-Object -ExpandProperty Name)
+
+    # ── -Quick: filter evaluators to those that handle Critical / High controls
+    if ($Quick) {
+        $highSevEvaluators = @{}
+        try {
+            foreach ($ctrl in (Get-NLSControlDefinitions)) {
+                if ($ctrl.Severity -in @('Critical','High') -and $ctrl.EvaluatorFunction) {
+                    $highSevEvaluators[$ctrl.EvaluatorFunction] = $true
+                }
+            }
+        } catch { Write-Warning "Quick-scan filter: could not resolve control defs ($($_.Exception.Message))" }
+        $beforeCount = $evaluators.Count
+        $evaluators  = @($evaluators | Where-Object { $highSevEvaluators.ContainsKey($_) })
+        Write-Host "  [i] Quick mode: $($evaluators.Count) of $beforeCount evaluators (Critical + High only)" -ForegroundColor Yellow
+    }
+
     foreach ($ev in $evaluators) {
         Invoke-NLSEvaluator $ev
     }
@@ -514,6 +553,19 @@ if (-not $skipCollection) {
         AssessmentTime = (Get-Date).ToString('o')
         ToolVersion    = $NLSAssessmentVersion
         Brand          = $NLSBrand
+        QuickScan      = [bool]$Quick
+    }
+
+    # ── Maturity tier (roadmap F1) ──────────────────────────────────────────
+    # Derived from the final findings stream — not a separate evaluator pass.
+    # Result is embedded in the metadata so every publisher (HTML, JSON,
+    # Markdown, Playbook, Delta) sees the same classification.
+    if (Get-Command Get-NLSMaturityTier -ErrorAction SilentlyContinue) {
+        try {
+            $reportMetadata['Maturity'] = Get-NLSMaturityTier -Findings $findings
+        } catch {
+            Write-Warning "Maturity-tier classification failed: $($_.Exception.Message)"
+        }
     }
 }
 
@@ -661,7 +713,44 @@ Write-Host "  Gap            $($s.Gap)"                                        -
 Write-Host "  Not Applicable $($s.NA)"                                         -ForegroundColor DarkGray
 Write-Host "  Total          $($findings.Count)"                               -ForegroundColor White
 Write-Host "  Output         $OutputPath"                                      -ForegroundColor White
+if ($reportMetadata.Contains('Maturity') -and $reportMetadata['Maturity']) {
+    $m = $reportMetadata['Maturity']
+    Write-Host "  Maturity       $($m.Label) (tier $($m.Tier)/5, score $($m.Score)/100)" -ForegroundColor Cyan
+}
 Write-Host ""
+
+# ── Threshold exit codes (CI / automation) ────────────────────────────────────
+# Operators wire these into Task Scheduler / cron / GitHub Actions to fail a
+# scheduled run when posture drifts past a tolerated limit. Each switch is
+# opt-in (default 0 = disabled), and only fires when a real gap count crosses
+# the threshold. The threshold codes (10/11/12) are distinct from the
+# existing 1/2/3/4 spec so callers can disambiguate "no findings" from
+# "too many criticals". First-match wins so the most severe signal lands.
+$threshFired = $false
+if ($FailOnCritical -gt 0 -and $s.Gap -gt 0) {
+    $critGaps = @($findings | Where-Object { $_.State -eq 'Gap' -and $_.Severity -eq 'Critical' }).Count
+    if ($critGaps -ge $FailOnCritical) {
+        Write-Host "[!] Threshold breached: $critGaps Critical gaps (limit $FailOnCritical) — exiting 10" -ForegroundColor Red
+        $script:NLSFatalExitCode = 10
+        $threshFired = $true
+    }
+}
+if (-not $threshFired -and $FailOnHigh -gt 0 -and $s.Gap -gt 0) {
+    $highGaps = @($findings | Where-Object { $_.State -eq 'Gap' -and $_.Severity -eq 'High' }).Count
+    if ($highGaps -ge $FailOnHigh) {
+        Write-Host "[!] Threshold breached: $highGaps High gaps (limit $FailOnHigh) — exiting 11" -ForegroundColor Red
+        $script:NLSFatalExitCode = 11
+        $threshFired = $true
+    }
+}
+if (-not $threshFired -and $FailOnScoreBelow -gt 0 -and $reportMetadata.Contains('Maturity') -and $reportMetadata['Maturity']) {
+    $maturityScore = [int]$reportMetadata['Maturity'].Score
+    if ($maturityScore -lt $FailOnScoreBelow) {
+        Write-Host "[!] Threshold breached: score $maturityScore < $FailOnScoreBelow — exiting 12" -ForegroundColor Red
+        $script:NLSFatalExitCode = 12
+        $threshFired = $true
+    }
+}
 
 # ── Exit-code spec (v4.6.3 P2) ────────────────────────────────────────────────
 # CLAUDE.md declares: 0 success, 1 auth failure, 2 no findings, 3 partial

@@ -72,9 +72,9 @@ Describe 'NLS-Assessment License Detection — v4.6.2' {
 
         It 'Test-NLSLicenseRequirementMet returns true for BP-gated controls' {
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus @(@{ SkuPartNumber = 'SPB'; ServicePlans = @('AAD_PREMIUM','INTUNE_A') })
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -LicenseProfile $p |
                 Should -BeTrue
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Intune Plan 1' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Intune Plan 1' -LicenseProfile $p |
                 Should -BeTrue
         }
 
@@ -122,7 +122,7 @@ Describe 'NLS-Assessment License Detection — v4.6.2' {
             $p.HasEntraP2 | Should -BeFalse
             $p.HasIntune  | Should -BeTrue
             # E3 holders should have "BP or P1" suppressed (P1 alone satisfies)
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -LicenseProfile $p |
                 Should -BeTrue
         }
 
@@ -131,7 +131,7 @@ Describe 'NLS-Assessment License Detection — v4.6.2' {
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
             $p.HasBusinessPremium | Should -BeFalse
             $p.HasEntraP2         | Should -BeTrue
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'Entra ID P2' -Profile $p | Should -BeTrue
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'Entra ID P2' -LicenseProfile $p | Should -BeTrue
         }
     }
 
@@ -143,7 +143,7 @@ Describe 'NLS-Assessment License Detection — v4.6.2' {
             $p.HasEntraP1         | Should -BeFalse
             $p.HasIntune          | Should -BeFalse
             $p.SuppressedLicenseRequirements.Count | Should -Be 0
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -LicenseProfile $p |
                 Should -BeFalse
         }
 
@@ -154,15 +154,15 @@ Describe 'NLS-Assessment License Detection — v4.6.2' {
         }
 
         It 'Null profile means "unknown" — Test- returns false to err on the side of disclosure' {
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -Profile $null |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Business Premium or Entra ID P1' -LicenseProfile $null |
                 Should -BeFalse
         }
 
         It 'Null / empty / Included* requirements are always considered met' {
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus @()
-            Test-NLSLicenseRequirementMet -LicenseRequirement $null    -Profile $p | Should -BeTrue
-            Test-NLSLicenseRequirementMet -LicenseRequirement ''       -Profile $p | Should -BeTrue
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'Included (all plans)' -Profile $p | Should -BeTrue
+            Test-NLSLicenseRequirementMet -LicenseRequirement $null    -LicenseProfile $p | Should -BeTrue
+            Test-NLSLicenseRequirementMet -LicenseRequirement ''       -LicenseProfile $p | Should -BeTrue
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'Included (all plans)' -LicenseProfile $p | Should -BeTrue
         }
     }
 
@@ -223,35 +223,35 @@ Describe 'NLS-Assessment License Detection — v4.6.2' {
         It 'Defender for Office 365 Plan 2 (M365 E5 or add-on) — suppressed on E5' {
             $skus = @(@{ SkuPartNumber = 'ENTERPRISEPREMIUM'; ServicePlans = @('THREAT_INTELLIGENCE','ATP_ENTERPRISE') })
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'Defender for Office 365 Plan 2 (M365 E5 or add-on)' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'Defender for Office 365 Plan 2 (M365 E5 or add-on)' -LicenseProfile $p |
                 Should -BeTrue
         }
 
         It 'M365 E5 Compliance add-on — suppressed when E5 compliance service plan present' {
             $skus = @(@{ SkuPartNumber = 'SPE_E5'; ServicePlans = @('EQUIVIO_ANALYTICS','RECORDS_MANAGEMENT') })
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 E5 Compliance add-on' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 E5 Compliance add-on' -LicenseProfile $p |
                 Should -BeTrue
         }
 
         It 'M365 E5 or E5 Compliance add-on — suppressed when E5 compliance present' {
             $skus = @(@{ SkuPartNumber = 'ENTERPRISEPREMIUM'; ServicePlans = @('INSIDER_RISK_MANAGEMENT') })
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 E5 or E5 Compliance add-on' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 E5 or E5 Compliance add-on' -LicenseProfile $p |
                 Should -BeTrue
         }
 
         It 'Microsoft Sentinel (add-on) or Defender XDR — suppressed on E5 / DfO P2 tenant' {
             $skus = @(@{ SkuPartNumber = 'SPE_E5'; ServicePlans = @('THREAT_INTELLIGENCE','MTP') })
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'Microsoft Sentinel (add-on) or Defender XDR' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'Microsoft Sentinel (add-on) or Defender XDR' -LicenseProfile $p |
                 Should -BeTrue
         }
 
         It 'Entra Workload Identities Premium (add-on) — suppressed when SKU present' {
             $skus = @(@{ SkuPartNumber = 'Microsoft_Entra_Workload_Identities_Premium'; ServicePlans = @() })
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'Entra Workload Identities Premium (add-on)' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'Entra Workload Identities Premium (add-on)' -LicenseProfile $p |
                 Should -BeTrue
         }
 
@@ -260,14 +260,14 @@ Describe 'NLS-Assessment License Detection — v4.6.2' {
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
             # Literal string with dollar sign and parentheses — make sure we
             # match it as a raw string, not a regex pattern.
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Copilot add-on license ($30/user/month)' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'M365 Copilot add-on license ($30/user/month)' -LicenseProfile $p |
                 Should -BeTrue
         }
 
         It 'Power Platform + Copilot Studio license — suppressed when PowerApps Per User SKU present' {
             $skus = @(@{ SkuPartNumber = 'POWERAPPS_PER_USER'; ServicePlans = @('POWERAPPS_PER_USER') })
             $p = Get-NLSTenantLicenseProfile -SubscribedSkus $skus
-            Test-NLSLicenseRequirementMet -LicenseRequirement 'Power Platform + Copilot Studio license' -Profile $p |
+            Test-NLSLicenseRequirementMet -LicenseRequirement 'Power Platform + Copilot Studio license' -LicenseProfile $p |
                 Should -BeTrue
         }
     }

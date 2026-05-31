@@ -197,8 +197,6 @@ function Publish-NLSAssessmentHTML {
         "No critical or high-severity gaps. <strong>$gap medium/low severity</strong> items to resolve."
     } else { 'All assessed controls are satisfied. No gaps identified.' }
 
-    # ── Secure Score (TODO: wire ss-ring widget into HTML body) ────────────
-
     # ── Connections ───────────────────────────────────────────────────────────
     $svcMap = @{Graph='Microsoft Graph';EXO='Exchange Online';IPPSSession='Purview/Compliance';Teams='Microsoft Teams';SharePoint='SharePoint Online'}
     $connHtml = ''
