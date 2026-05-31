@@ -1,6 +1,6 @@
 @{
     # Module identity
-    ModuleVersion     = '4.10.0'
+    ModuleVersion     = '4.10.1'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'NextLayerSec'
     CompanyName       = 'NextLayerSec'
@@ -50,6 +50,8 @@
         'Get-NLSNestedProperty',
         'Test-NLSSignatureStatus',
         'Get-NLSMaturityTier',
+        'Get-NLSCoverageScore',
+        'Get-NLSObjectField',
 
         # ── Collectors — AAD ──────────────────────────────────────────────────
         'Invoke-NLSCollectAADAuthPolicies',

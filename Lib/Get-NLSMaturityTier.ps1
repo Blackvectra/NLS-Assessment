@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 #
-# Get-NLSMaturityTier.ps1  (v4.9.0)
+# Get-NLSMaturityTier.ps1  (v4.10.1)
 #
 # Author: NextLayerSec — nextlayersec.io
 # Purpose: Derived classification of tenant security posture into a 5-tier
@@ -11,7 +11,9 @@
 # Inputs:  Findings array (post-evaluation) — same shape Get-NLSFindings emits.
 #          Accepts an empty array (silent zero-score result, not a binding error).
 # Outputs: [ordered] hashtable with Tier (1-5), Label, Score, CriticalGaps,
-#          HighGaps, ScoredControls, Description. Safe to serialize as JSON.
+#          HighGaps, ScoredControls, ErrorFindings, UnknownStates, Description,
+#          plus per-state counts (Satisfied, Partial, Gap, NotApplicable, Total).
+#          Safe to serialize as JSON.
 #
 # Tier rules (combination of coverage % across license-applicable controls
 # and absolute critical/high gap count — captures both "wide" and "deep"):
@@ -22,15 +24,20 @@
 #   2 Developing   Score >= 40 AND Critical <= 5
 #   1 Initial      Everything else (<40% coverage OR any critical gap with low score)
 #
-# Score derivation matches the Publish-NLSAssessmentHTML formula so the
-# maturity badge and the score ring never disagree:
+# Score derivation matches Get-NLSCoverageScore's default (Error excluded):
 #   score = round(100 * (Satisfied + 0.5*Partial) / ScoredControls)
-#   ScoredControls = total findings - NotApplicable - Error
+#   ScoredControls = total findings - NotApplicable - Error - Unknown
 #
 # Why Error is excluded from the denominator: an `Error` finding means the
 # evaluator threw (transient Graph throttling, missing scope, partial collection).
 # Counting it as a gap punishes the operator for tool problems and turns
 # `-FailOnScoreBelow` in CI into a false alarm on flaky tenants.
+#
+# v4.10.1: the coverage-score computation moved into Lib/Get-NLSCoverageScore.ps1
+# (one canonical formula across all publishers + this helper). The shape-agnostic
+# field reader moved into Lib/Get-NLSObjectField.ps1. This file now does only
+# the tier classification — CriticalGaps/HighGaps still computed locally because
+# they are severity-aware over Gap findings specifically (not coverage math).
 
 function Get-NLSMaturityTier {
     [CmdletBinding()]
@@ -45,58 +52,22 @@ function Get-NLSMaturityTier {
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
-    # Single pass over Findings — earlier version did five Where-Object scans
-    # AND used simple-syntax that throws under StrictMode when an element is
-    # missing State / Severity. Field reads use a shape-agnostic helper so
-    # hashtables AND PSCustomObjects (incl. ConvertFrom-Json output from the
-    # -FromResults path) both work, and missing keys yield $null instead of
-    # throwing.
-    function Read-FindingField {
-        param($Item, [string]$Key)
-        if ($null -eq $Item) { return $null }
-        if ($Item -is [System.Collections.IDictionary]) {
-            if ($Item.Contains($Key)) { return $Item[$Key] }
-            return $null
-        }
-        $p = $Item.PSObject.Properties[$Key]
-        if ($null -ne $p) { return $p.Value }
-        return $null
-    }
+    $cov = Get-NLSCoverageScore -Findings $Findings
 
-    # Counters tracked inside the loop so $null entries (which we explicitly
-    # skip) don't inflate the denominator — earlier $Findings.Count math
-    # included skipped nulls and silently deflated the score on dirty
-    # -FromResults baselines. $total is "findings actually classified",
-    # everything else is a partition of $total.
-    $total = 0
-    $sat = 0; $part = 0; $na = 0; $err = 0; $unknown = 0
+    # Severity-of-gap counters — computed inline because they aren't coverage
+    # math. One pass over findings; the coverage helper already validated and
+    # skipped nulls but we re-iterate here to count by severity.
     $crit = 0; $high = 0
     foreach ($f in $Findings) {
         if ($null -eq $f) { continue }
-        $total++
-        $state    = Read-FindingField -Item $f -Key 'State'
-        $severity = Read-FindingField -Item $f -Key 'Severity'
-        switch ($state) {
-            'Satisfied'     { $sat++ }
-            'Partial'       { $part++ }
-            'NotApplicable' { $na++ }
-            'Error'         { $err++ }
-            'Gap' {
-                if ($severity -eq 'Critical') { $crit++ }
-                elseif ($severity -eq 'High') { $high++ }
-            }
-            default {
-                # Unknown / future / typo'd State value. Don't silently
-                # absorb it into the denominator — that would let a typo
-                # like 'Satisifed' (no 'f') silently deflate the score.
-                # Track + surface via UnknownStates so the caller can warn.
-                $unknown++
-            }
-        }
+        $state = Get-NLSObjectField -Item $f -Key 'State'
+        if ($state -ne 'Gap') { continue }
+        $severity = Get-NLSObjectField -Item $f -Key 'Severity'
+        if     ($severity -eq 'Critical') { $crit++ }
+        elseif ($severity -eq 'High')     { $high++ }
     }
 
-    $scored = $total - $na - $err - $unknown
-    $score  = if ($scored -gt 0) { [Math]::Round(100 * ($sat + 0.5 * $part) / $scored) } else { 0 }
+    $score = $cov.Score
 
     $tier  = 1
     $label = 'Initial'
@@ -122,12 +93,20 @@ function Get-NLSMaturityTier {
     [ordered]@{
         Tier            = $tier
         Label           = $label
-        Score           = [int]$score
+        Score           = $score
         CriticalGaps    = $crit
         HighGaps        = $high
-        ScoredControls  = $scored
-        ErrorFindings   = $err
-        UnknownStates   = $unknown
+        ScoredControls  = $cov.Scored
+        ErrorFindings   = $cov.Error
+        UnknownStates   = $cov.Unknown
         Description     = $desc
+        # v4.10.1 — per-state counts pulled through from the coverage helper
+        # so the orchestrator's summary banner and any future caller reads
+        # from one source instead of re-deriving with Where-Object.
+        Satisfied       = $cov.Satisfied
+        Partial         = $cov.Partial
+        Gap             = $cov.Gap
+        NotApplicable   = $cov.NA
+        Total           = $cov.Total
     }
 }

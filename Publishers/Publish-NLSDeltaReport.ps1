@@ -47,16 +47,21 @@ function Get-NLSRawDataDrift {
 
     # Defensive extractor — drift only fires when both runs collected the
     # data. A missing collector or schema rename is treated as "no drift,"
-    # not "everything is new."
+    # not "everything is new." v4.10.1: switched to Get-NLSObjectField for
+    # shape-agnostic reads. The prior $bag.Success / $bag.Data direct
+    # property accesses were a latent StrictMode bug — a PSCustomObject
+    # bag (from ConvertFrom-Json) without a Success/Data property would
+    # have thrown rather than gracefully returning @().
     $getBag = {
         param([object] $root, [string] $key, [string] $field)
         if ($null -eq $root) { return @() }
-        $bag = if ($root -is [hashtable] -or $root -is [System.Collections.IDictionary]) { $root[$key] }
-               else { $root.PSObject.Properties[$key].Value }
-        if (-not $bag -or -not $bag.Success) { return @() }
-        $data = if ($bag.Data) { $bag.Data } else { return @() }
-        $arr  = if ($data -is [hashtable] -or $data -is [System.Collections.IDictionary]) { $data[$field] }
-                else { $data.PSObject.Properties[$field].Value }
+        $bag = Get-NLSObjectField -Item $root -Key $key
+        if ($null -eq $bag) { return @() }
+        $success = Get-NLSObjectField -Item $bag -Key 'Success'
+        if (-not $success) { return @() }
+        $data = Get-NLSObjectField -Item $bag -Key 'Data'
+        if ($null -eq $data) { return @() }
+        $arr = Get-NLSObjectField -Item $data -Key $field
         if (-not $arr) { return @() }
         return @($arr)
     }
@@ -149,17 +154,21 @@ function Get-NLSRawDataDrift {
     }
 
     # ── DMARC policy regression ──────────────────────────────────────────
+    # v4.10.1: shape-checks consolidated through Get-NLSObjectField. The Keys
+    # enumeration stays inline because it's a different operation (collect
+    # all keys, not read one field) and a dedicated Get-NLSObjectKeys helper
+    # would have one caller — over-extraction.
     $bDns = & $getBag $Baseline 'DNS-EmailRecords' 'Domains'
     $cDns = & $getBag $Current  'DNS-EmailRecords' 'Domains'
     if ($bDns -and $cDns) {
         $rank = @{ 'reject' = 2; 'quarantine' = 1; 'none' = 0 }
-        $bKeys = if ($bDns -is [hashtable] -or $bDns -is [System.Collections.IDictionary]) { $bDns.Keys } else { $bDns.PSObject.Properties.Name }
+        $bKeys = if ($bDns -is [System.Collections.IDictionary]) { $bDns.Keys } else { $bDns.PSObject.Properties.Name }
         foreach ($dom in $bKeys) {
-            $bd = if ($bDns -is [hashtable] -or $bDns -is [System.Collections.IDictionary]) { $bDns[$dom] } else { $bDns.PSObject.Properties[$dom].Value }
-            $cd = if ($cDns -is [hashtable] -or $cDns -is [System.Collections.IDictionary]) { $cDns[$dom] } else { $cDns.PSObject.Properties[$dom].Value }
+            $bd = Get-NLSObjectField -Item $bDns -Key $dom
+            $cd = Get-NLSObjectField -Item $cDns -Key $dom
             if (-not $cd) { continue }
-            $bP = [string]($bd.DMARCPolicy ?? '')
-            $cP = [string]($cd.DMARCPolicy ?? '')
+            $bP = [string](Get-NLSObjectField -Item $bd -Key 'DMARCPolicy' -Default '')
+            $cP = [string](Get-NLSObjectField -Item $cd -Key 'DMARCPolicy' -Default '')
             if ($bP -and $cP -and $rank.ContainsKey($bP) -and $rank.ContainsKey($cP) -and ($rank[$cP] -lt $rank[$bP])) {
                 $drift.DMARCRegressions += @{
                     Domain = $dom
@@ -300,15 +309,12 @@ function Publish-NLSDeltaReport {
     }
 
     # ── Score computation ───────────────────────────────────────────────────
-    function Get-Score {
-        param([object[]] $f)
-        $sc  = @($f | Where-Object State -ne 'NotApplicable').Count
-        $sat = @($f | Where-Object State -eq  'Satisfied').Count
-        $pt  = @($f | Where-Object State -eq  'Partial').Count
-        if ($sc -gt 0) { [int][Math]::Round(100 * ($sat + 0.5 * $pt) / $sc) } else { 0 }
-    }
-    $currScore  = Get-Score $CurrentFindings
-    $baseScore  = Get-Score $baseFindings
+    # v4.10.1: replaced the nested Get-Score function with a canonical helper.
+    # -ErrorHandling Gap preserves the prior Delta semantics (Error counted in
+    # denominator). The current vs baseline scores use identical math so the
+    # delta arrow stays meaningful even after the refactor.
+    $currScore  = (Get-NLSCoverageScore -Findings $CurrentFindings -ErrorHandling 'Gap').Score
+    $baseScore  = (Get-NLSCoverageScore -Findings $baseFindings    -ErrorHandling 'Gap').Score
     $scoreDelta = $currScore - $baseScore
     $scoreArrow = if ($scoreDelta -gt 0) { "&#9650; +$scoreDelta" }
                   elseif ($scoreDelta -lt 0) { "&#9660; $scoreDelta" }
