@@ -31,6 +31,22 @@ param(
     [string] $CertificateThumbprint,
     [string] $OrganizationDomain,
 
+    # One-time tenant onboarding: register a read-only enterprise app + cert in
+    # the customer tenant so future scans run app-only (no device codes, no
+    # Conditional-Access flow blocks). Requires an operator who can create app
+    # registrations; you'll be connected interactively with write scopes first.
+    [switch] $RegisterApp,
+
+    # Auto-grant admin consent during -RegisterApp (operator must be Global
+    # Administrator). Omit to instead receive a consent URL for a Global Admin.
+    [switch] $GrantConsent,
+
+    # Convenience: look up a previously-onboarded tenant's ClientId + cert
+    # thumbprint from Config/clients.json by domain, so unattended scans don't
+    # need the GUIDs pasted every time. Also the target for -RegisterApp.
+    [ValidatePattern('^$|^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$')]
+    [string] $TenantDomain,
+
     # Cloud environment
     [ValidateSet('commercial','gcc','gcchigh','dod')]
     [string] $Environment = 'commercial',
@@ -171,6 +187,60 @@ try {
 if ($Web) {
     Start-NLSWebServer -Port $WebPort -ScriptDir $scriptDir
     exit 0
+}
+
+# -RegisterApp short-circuits into one-time tenant onboarding: connect
+# interactively with WRITE scopes, then create the read-only enterprise app +
+# cert in the customer tenant and record it in clients.json. After this, scans
+# of that tenant run app-only. This is a privileged, deliberate operation — it
+# never happens during a normal scan.
+if ($RegisterApp) {
+    if (-not $TenantDomain) {
+        Write-Host "  [!] -RegisterApp requires -TenantDomain (the customer's domain)." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ""
+    Write-Host "[-] Connecting to Microsoft Graph with onboarding (write) scopes..." -ForegroundColor Cyan
+    Write-Host "    A browser sign-in will open. Authorize as an admin of $TenantDomain." -ForegroundColor DarkGray
+    try {
+        Connect-MgGraph -Scopes 'Application.ReadWrite.All','AppRoleAssignment.ReadWrite.All','Directory.Read.All' `
+                        -ContextScope Process -NoWelcome -ErrorAction Stop
+    } catch {
+        Write-Host "  [!] Graph connect failed: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+    $regParams = @{ TenantDomain = $TenantDomain }
+    if ($GrantConsent) { $regParams['GrantConsent'] = $true }
+    Register-NLSTenantApp @regParams
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { }
+    exit 0
+}
+
+# -TenantDomain convenience: if the operator gave a domain but no explicit
+# app-only credentials, look up a previously-onboarded record in clients.json
+# and populate AppId / TenantId / CertificateThumbprint so the scan runs
+# app-only with zero typed GUIDs.
+if ($TenantDomain -and -not ($AppId -and $TenantId -and $CertificateThumbprint)) {
+    $clientsPath = Join-Path $scriptDir 'Config\clients.json'
+    if (Test-Path -LiteralPath $clientsPath) {
+        try {
+            $rec = @(Get-Content -LiteralPath $clientsPath -Raw -Encoding utf8 | ConvertFrom-Json) |
+                   Where-Object { $_.TenantDomain -eq $TenantDomain -and $_.PSObject.Properties['ClientId'] -and $_.ClientId } |
+                   Select-Object -First 1
+        } catch { $rec = $null }
+        if ($rec) {
+            $AppId                 = [string]$rec.ClientId
+            $TenantId              = [string]$rec.TenantId
+            $CertificateThumbprint = [string]$rec.CertThumbprint
+            if (-not $OrganizationDomain -and $rec.PSObject.Properties['TenantDomain']) {
+                $OrganizationDomain = [string]$rec.TenantDomain
+            }
+            Write-Host "  [+] Using app-only auth for $TenantDomain (ClientId $AppId)" -ForegroundColor Green
+        } else {
+            Write-Host "  [i] $TenantDomain is not onboarded for app-only auth. Falling back to interactive." -ForegroundColor DarkGray
+            Write-Host "      Onboard it once with:  .\Invoke-NLSAssessment.ps1 -RegisterApp -TenantDomain $TenantDomain" -ForegroundColor DarkGray
+        }
+    }
 }
 
 Clear-NLSFindings
